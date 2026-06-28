@@ -39,7 +39,6 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── App shell ──────────────────────────────────────── */
 #app {
   max-width: 480px;
   margin: 0 auto;
@@ -69,7 +68,6 @@ html, body {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   flex: 1;
-  color: var(--text);
 }
 
 #header-back {
@@ -92,7 +90,7 @@ html, body {
   padding: 4px;
 }
 
-/* ── Scrollable content ──────────────────────────────── */
+/* ── Content ─────────────────────────────────────────── */
 #content {
   flex: 1;
   overflow-y: auto;
@@ -150,7 +148,7 @@ html, body {
   margin-bottom: 12px;
 }
 
-/* ── Form controls ───────────────────────────────────── */
+/* ── Forms ───────────────────────────────────────────── */
 select, input[type="text"], input[type="number"] {
   width: 100%;
   padding: 10px 12px;
@@ -183,8 +181,7 @@ select:focus, input:focus { border-color: var(--accent); }
   letter-spacing: 0.05em;
 }
 
-.form-row select,
-.form-row input { flex: 1; }
+.form-row select, .form-row input { flex: 1; }
 
 /* ── Buttons ─────────────────────────────────────────── */
 .btn {
@@ -206,7 +203,6 @@ select:focus, input:focus { border-color: var(--accent); }
 }
 
 .btn:active { transform: scale(0.97); }
-.btn:hover { border-color: var(--border-md); }
 
 .btn-primary {
   background: var(--accent);
@@ -216,14 +212,7 @@ select:focus, input:focus { border-color: var(--accent); }
 }
 
 .btn-primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
-
-.btn-ghost {
-  background: none;
-  border: none;
-  color: var(--accent);
-  padding: 8px 4px;
-}
-
+.btn-ghost { background: none; border: none; color: var(--accent); padding: 8px 4px; }
 .btn-full { width: 100%; }
 
 /* ── FAB ─────────────────────────────────────────────── */
@@ -279,7 +268,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .stat-val.accent { color: var(--accent); }
 .stat-lbl { font-size: 10px; color: var(--text-3); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
 
-/* ── Log list items ──────────────────────────────────── */
+/* ── Log items ───────────────────────────────────────── */
 .log-item {
   display: flex;
   align-items: center;
@@ -289,13 +278,7 @@ select:focus, input:focus { border-color: var(--accent); }
 }
 
 .log-item:last-child { border-bottom: none; }
-
-.log-name {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text);
-}
-
+.log-name { font-size: 15px; font-weight: 500; color: var(--text); }
 .log-detail { font-size: 12px; color: var(--text-2); margin-top: 3px; }
 
 .log-weight {
@@ -355,12 +338,12 @@ select:focus, input:focus { border-color: var(--accent); }
 
 .pr-cell-val.empty { color: var(--text-3); font-weight: 400; font-family: var(--font-body); font-size: 13px; }
 
-/* ── Session planner sets ────────────────────────────── */
+/* ── Set rows ────────────────────────────────────────── */
 .set-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 0;
+  gap: 6px;
+  padding: 9px 0;
   border-bottom: 1px solid var(--border);
   transition: opacity 0.25s;
 }
@@ -370,10 +353,10 @@ select:focus, input:focus { border-color: var(--accent); }
 
 .set-num {
   font-family: var(--font-display);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-3);
-  min-width: 20px;
+  min-width: 18px;
   text-align: center;
 }
 
@@ -381,12 +364,11 @@ select:focus, input:focus { border-color: var(--accent); }
 
 .pct-input {
   width: 52px !important;
-  padding: 7px 8px !important;
+  padding: 6px 6px !important;
   font-size: 14px !important;
   text-align: center;
   font-family: var(--font-display) !important;
   font-weight: 700 !important;
-  letter-spacing: 0.02em;
 }
 
 .pct-suffix { font-size: 12px; color: var(--text-3); }
@@ -394,10 +376,10 @@ select:focus, input:focus { border-color: var(--accent); }
 
 .set-weight {
   font-family: var(--font-display);
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text);
-  min-width: 76px;
+  min-width: 72px;
   text-align: right;
   letter-spacing: 0.02em;
 }
@@ -421,14 +403,9 @@ select:focus, input:focus { border-color: var(--accent); }
 }
 
 .set-check:active { transform: scale(0.85); }
+.set-check.checked { background: var(--green); border-color: var(--green); color: #111; }
 
-.set-check.checked {
-  background: var(--green);
-  border-color: var(--green);
-  color: #111;
-}
-
-/* ── "Nice job!" toast ───────────────────────────────── */
+/* ── Toast ───────────────────────────────────────────── */
 .nice-toast {
   position: fixed;
   bottom: calc(var(--nav-h) + 80px);
@@ -451,10 +428,7 @@ select:focus, input:focus { border-color: var(--accent); }
   white-space: nowrap;
 }
 
-.nice-toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
+.nice-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* ── Plate chips ─────────────────────────────────────── */
 .plate-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
@@ -474,7 +448,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .chip b { color: var(--accent); font-weight: 700; }
 .chip-note { font-size: 11px; color: var(--text-3); margin-top: 6px; }
 
-/* ── Section header with action ──────────────────────── */
+/* ── Section head ────────────────────────────────────── */
 .section-head {
   display: flex;
   align-items: center;
@@ -492,7 +466,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .empty .icon { font-size: 36px; margin-bottom: 10px; opacity: 0.3; }
 .empty p { font-size: 15px; margin-bottom: 18px; }
 
-/* ── Settings rows ───────────────────────────────────── */
+/* ── Settings ────────────────────────────────────────── */
 .setting-row {
   display: flex;
   align-items: center;
@@ -505,7 +479,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .setting-label { font-size: 14px; font-weight: 500; color: var(--text); }
 .setting-sub { font-size: 12px; color: var(--text-2); margin-top: 3px; }
 
-/* ── Modal overlay ───────────────────────────────────── */
+/* ── Modal ───────────────────────────────────────────── */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -518,10 +492,7 @@ select:focus, input:focus { border-color: var(--accent); }
   transition: opacity 0.25s;
 }
 
-.modal-overlay.open {
-  opacity: 1;
-  pointer-events: all;
-}
+.modal-overlay.open { opacity: 1; pointer-events: all; }
 
 .modal-sheet {
   width: 100%;
@@ -556,11 +527,7 @@ select:focus, input:focus { border-color: var(--accent); }
 }
 
 /* ── Divider ─────────────────────────────────────────── */
-.divider {
-  height: 1px;
-  background: var(--border);
-  margin: 12px 0;
-}
+.divider { height: 1px; background: var(--border); margin: 12px 0; }
 
 /* ── Utility ─────────────────────────────────────────── */
 .hidden { display: none !important; }

@@ -1,21 +1,31 @@
 import { openDB, seedIfEmpty, getExercises, getSets, addSet, deleteSet, getAllPRs, getPref, setPref, getEquipment } from './db.js';
 import { calcPlates, targetFromPct, displayWeight, buildSessionPlan } from './calc.js';
 import { burstFromEl } from './confetti.js';
+import { exportBackup, importBackup } from './backup.js';
+import { VERSION, BUILD_DATE } from './version.js';
 
 // ── State ──────────────────────────────────────────────────
 let state = {
   tab: 'log',
   unit: 'lbs',
   exercises: [],
-  todaySets: [],
   equipment: { barWeight: 45, plates: [] },
-  // planner
-  plannerExId: null,
-  plannerRM: 1,
-  plannerSets: [50, 65, 75, 85, 85, 85],
-  plannerChecked: [],
-  // pr window
   prWindow: '365',
+  plannerWorkout: [
+    {
+      exerciseId: null,
+      rmType: 1,
+      sets: [
+        { mode: 'pct', value: 50,  reps: 5 },
+        { mode: 'pct', value: 65,  reps: 5 },
+        { mode: 'pct', value: 75,  reps: 5 },
+        { mode: 'pct', value: 85,  reps: 5 },
+        { mode: 'pct', value: 85,  reps: 5 },
+        { mode: 'pct', value: 85,  reps: 5 },
+      ],
+      checked: [],
+    }
+  ],
 };
 
 // ── Boot ───────────────────────────────────────────────────
@@ -26,8 +36,12 @@ async function boot() {
   state.equipment = await getEquipment();
   state.unit = await getPref('unit', 'lbs');
   state.prWindow = await getPref('prWindow', '365');
-  state.plannerChecked = state.plannerSets.map(() => false);
-  if (state.exercises.length > 0) state.plannerExId = state.exercises[0].id;
+
+  // Assign first exercise to first planner block
+  if (state.exercises.length > 0) {
+    state.plannerWorkout[0].exerciseId = state.exercises[0].id;
+    state.plannerWorkout[0].checked = state.plannerWorkout[0].sets.map(() => false);
+  }
 
   renderTab('log');
   setupNav();
@@ -50,16 +64,14 @@ function switchTab(tab) {
 async function renderTab(tab) {
   const content = document.getElementById('content');
   const h1 = document.querySelector('#header h1');
-  const tabTitles = { log: 'Iron Log', prs: 'Personal Records', planner: 'Session Planner', settings: 'Settings' };
-  h1.textContent = tabTitles[tab];
-
+  const titles = { log: 'Iron Log', prs: 'Personal Records', planner: 'Session Planner', settings: 'Settings' };
+  h1.textContent = titles[tab];
   if (tab === 'log') await renderLog(content);
   else if (tab === 'prs') await renderPRs(content);
   else if (tab === 'planner') await renderPlanner(content);
   else if (tab === 'settings') await renderSettings(content);
 }
 
-// ── Helpers ────────────────────────────────────────────────
 function dw(lbs) { return displayWeight(lbs, state.unit); }
 
 function sinceDate() {
@@ -69,9 +81,7 @@ function sinceDate() {
   return d.toISOString().split('T')[0];
 }
 
-function todayStr() {
-  return new Date().toISOString().split('T')[0];
-}
+function todayStr() { return new Date().toISOString().split('T')[0]; }
 
 function fmtDate(isoStr) {
   return new Date(isoStr + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -83,7 +93,6 @@ async function renderLog(el) {
   const today = todayStr();
   const todaySets = allSets.filter(s => s.date === today).reverse();
 
-  // Count PRs set today
   let prCount = 0;
   for (const s of todaySets) {
     const prs = await getAllPRs(s.exerciseId, sinceDate());
@@ -94,9 +103,7 @@ async function renderLog(el) {
 
   const setsHtml = todaySets.length === 0
     ? `<div class="empty"><div class="icon">🏋️</div><p>No sets logged today yet.</p></div>`
-    : todaySets.map(s => {
-        const prs = {};
-        return `
+    : todaySets.map(s => `
         <div class="log-item" data-id="${s.id}">
           <div>
             <div class="log-name">${exMap[s.exerciseId] || '?'}</div>
@@ -106,8 +113,7 @@ async function renderLog(el) {
             <div class="log-weight">${dw(s.weight)}</div>
             <button class="btn btn-ghost" style="padding:4px;font-size:18px;color:var(--text-3)" onclick="deleteSetItem(${s.id})">✕</button>
           </div>
-        </div>`;
-      }).join('');
+        </div>`).join('');
 
   el.innerHTML = `
     <div class="stat-grid">
@@ -118,8 +124,7 @@ async function renderLog(el) {
     <div class="card">
       <div class="card-label">Today · ${new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</div>
       ${setsHtml}
-    </div>
-  `;
+    </div>`;
 
   document.getElementById('fab').onclick = openLogModal;
 }
@@ -130,12 +135,10 @@ window.deleteSetItem = async function(id) {
   renderTab('log');
 };
 
-// ── Log modal (bottom sheet) ───────────────────────────────
 function openLogModal() {
-  const overlay = document.getElementById('log-modal');
-  const exSel = document.getElementById('modal-exercise');
-  exSel.innerHTML = state.exercises.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
-  overlay.classList.add('open');
+  document.getElementById('modal-exercise').innerHTML =
+    state.exercises.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+  document.getElementById('log-modal').classList.add('open');
 }
 
 window.closeLogModal = function() {
@@ -147,11 +150,8 @@ window.submitLog = async function() {
   const reps = parseInt(document.getElementById('modal-reps').value);
   const weightRaw = parseFloat(document.getElementById('modal-weight').value);
   const notes = document.getElementById('modal-notes').value.trim();
-
   if (!exId || isNaN(reps) || isNaN(weightRaw)) return;
-
   const weightLbs = state.unit === 'kg' ? weightRaw * 2.20462 : weightRaw;
-
   await addSet({ exerciseId: exId, date: todayStr(), weight: Math.round(weightLbs * 10) / 10, reps, notes });
   closeLogModal();
   renderTab('log');
@@ -160,35 +160,15 @@ window.submitLog = async function() {
 // ── PRs Tab ────────────────────────────────────────────────
 async function renderPRs(el) {
   const since = sinceDate();
-  const windowLabel = {
-    '90': 'Last 3 months', '180': 'Last 6 months',
-    '365': 'Last year', 'all': 'All time'
-  }[state.prWindow] || 'Last year';
-
-  const rows = await Promise.all(state.exercises.map(async ex => {
-    const prs = await getAllPRs(ex.id, since);
-    return { ex, prs };
-  }));
-
+  const windowLabel = { '90': 'Last 3 months', '180': 'Last 6 months', '365': 'Last year', 'all': 'All time' }[state.prWindow] || 'Last year';
+  const rows = await Promise.all(state.exercises.map(async ex => ({ ex, prs: await getAllPRs(ex.id, since) })));
   const hasAny = rows.some(r => r.prs[1] || r.prs[3] || r.prs[5]);
-
-  const rowsHtml = rows.map(({ ex, prs }) => `
-    <div class="pr-row">
-      <div class="pr-name">${ex.name}</div>
-      <div class="pr-cells">
-        ${[1,3,5].map(r => `
-          <div class="pr-cell">
-            <div class="pr-cell-lbl">${r}RM</div>
-            <div class="pr-cell-val${prs[r] ? '' : ' empty'}">${prs[r] ? dw(prs[r]) : '—'}</div>
-          </div>`).join('')}
-      </div>
-    </div>`).join('');
 
   el.innerHTML = `
     <div class="card" style="margin-bottom:12px">
       <div class="card-label">PR window</div>
       <select onchange="setPRWindow(this.value)">
-        <option value="90" ${state.prWindow==='90'?'selected':''}>Last 3 months</option>
+        <option value="90"  ${state.prWindow==='90' ?'selected':''}>Last 3 months</option>
         <option value="180" ${state.prWindow==='180'?'selected':''}>Last 6 months</option>
         <option value="365" ${state.prWindow==='365'?'selected':''}>Last year</option>
         <option value="all" ${state.prWindow==='all'?'selected':''}>All time</option>
@@ -196,9 +176,19 @@ async function renderPRs(el) {
     </div>
     <div class="card">
       <div class="card-label">${windowLabel}</div>
-      ${hasAny ? rowsHtml : '<div class="empty"><p>No sets logged yet. Start lifting to see your PRs here.</p></div>'}
-    </div>
-  `;
+      ${hasAny ? rows.map(({ ex, prs }) => `
+        <div class="pr-row">
+          <div class="pr-name">${ex.name}</div>
+          <div class="pr-cells">
+            ${[1,3,5].map(r => `
+              <div class="pr-cell">
+                <div class="pr-cell-lbl">${r}RM</div>
+                <div class="pr-cell-val${prs[r] ? '' : ' empty'}">${prs[r] ? dw(prs[r]) : '—'}</div>
+              </div>`).join('')}
+          </div>
+        </div>`).join('')
+      : '<div class="empty"><p>No sets logged yet. Start lifting to see your PRs here.</p></div>'}
+    </div>`;
 }
 
 window.setPRWindow = async function(val) {
@@ -207,216 +197,286 @@ window.setPRWindow = async function(val) {
   renderTab('prs');
 };
 
-// ── Session Planner Tab ────────────────────────────────────
+// ── Session Planner ────────────────────────────────────────
 async function renderPlanner(el) {
-  const exOptions = state.exercises.map(e =>
-    `<option value="${e.id}" ${e.id === state.plannerExId ? 'selected' : ''}>${e.name}</option>`
-  ).join('');
-
   const since = sinceDate();
-  const prs = state.plannerExId ? await getAllPRs(state.plannerExId, since) : { 1: null, 3: null, 5: null };
-  const pr = prs[state.plannerRM];
   const { barWeight, plates } = state.equipment;
 
-  // Build target weights for all sets
-  const targets = pr ? state.plannerSets.map(pct => targetFromPct(pr, pct)) : [];
+  // Build HTML for each movement block
+  const blocksHtml = await Promise.all(state.plannerWorkout.map(async (block, bi) => {
+    const exOptions = state.exercises.map(e =>
+      `<option value="${e.id}" ${e.id === block.exerciseId ? 'selected' : ''}>${e.name}</option>`
+    ).join('');
 
-  // Build session transition plan
-  const plan = pr ? buildSessionPlan(targets, barWeight, plates) : [];
+    const prs = block.exerciseId ? await getAllPRs(block.exerciseId, since) : { 1: null, 3: null, 5: null };
+    const pr = prs[block.rmType];
 
-  const setsHtml = state.plannerSets.map((pct, i) => {
-    const isDone = state.plannerChecked[i];
-    const weightDisplay = plan[i] ? dw(plan[i].actual) : '—';
-    return `
-      <div class="set-row${isDone ? ' done' : ''}" id="set-row-${i}">
-        <div class="set-num">${i + 1}</div>
-        <div class="pct-wrap">
-          <input class="pct-input" type="number" min="1" max="200" value="${pct}"
-            onchange="updateSetPct(${i}, this.value)" />
-          <span class="pct-suffix">%</span>
-        </div>
-        <div class="set-spacer"></div>
-        <div class="set-weight" id="sw-${i}">${weightDisplay}</div>
-        <div class="set-check${isDone ? ' checked' : ''}" id="sc-${i}"
-          onclick="toggleSetCheck(${i})" role="checkbox" aria-checked="${isDone}" aria-label="Mark set ${i+1} complete">
-          ${isDone ? '✓' : ''}
-        </div>
-      </div>`;
-  }).join('');
+    // Compute targets per set
+    const targets = block.sets.map(s => {
+      if (s.mode === 'pct') return pr ? targetFromPct(pr, s.value) : null;
+      return s.value || null;
+    });
 
-  // Plate transitions card — only show incomplete sets
-  // Re-derive transitions relative to what's actually on the bar right now.
-  // "What's on the bar" = the plate config of the last COMPLETED set,
-  // or nothing (empty bar) if no sets are done yet.
-  const incompletePlan = plan.filter((_, i) => !state.plannerChecked[i]);
-  const allDone = plan.length > 0 && incompletePlan.length === 0;
+    const validTargets = targets.map(t => t || 0);
+    const plan = buildSessionPlan(validTargets, barWeight, plates);
 
-  // Find the plate config currently on the bar (last completed set's config)
-  let currentPlates = [];
-  for (let i = plan.length - 1; i >= 0; i--) {
-    if (state.plannerChecked[i]) { currentPlates = plan[i].plates; break; }
-  }
+    // ── Set rows ───────────────────────────────────────────
+    const setsHtml = block.sets.map((set, si) => {
+      const isDone = block.checked[si];
+      const target = targets[si];
+      const weightDisplay = plan[si] && target ? dw(plan[si].actual) : '—';
+      const isPct = set.mode === 'pct';
 
-  function plateMap(plates) {
-    return Object.fromEntries(plates.map(p => [p.weight, p.count]));
-  }
+      const valueInput = isPct
+        ? `<input class="pct-input" type="number" min="1" max="200" value="${set.value}"
+             onchange="updateSetVal(${bi},${si},this.value)" />`
+        : `<input class="pct-input" type="number" min="0" step="2.5" value="${set.value}"
+             style="width:68px !important" onchange="updateSetVal(${bi},${si},this.value)" />`;
 
-  function delta(fromPlates, toPlates) {
-    const fromMap = plateMap(fromPlates);
-    const toMap = plateMap(toPlates);
-    const allW = new Set([...Object.keys(fromMap), ...Object.keys(toMap)].map(Number));
-    const add = [], remove = [];
-    for (const w of [...allW].sort((a, b) => b - a)) {
-      const before = fromMap[w] || 0;
-      const after = toMap[w] || 0;
-      if (after > before) add.push({ weight: w, count: after - before });
-      if (before > after) remove.push({ weight: w, count: before - after });
-    }
-    return { add, remove };
-  }
+      const modePill = `
+        <button onclick="toggleSetMode(${bi},${si})"
+          style="background:none;border:1px solid var(--border-md);border-radius:5px;
+                 padding:3px 5px;font-size:10px;color:${isPct ? 'var(--accent)' : 'var(--text-2)'};
+                 cursor:pointer;white-space:nowrap;font-family:var(--font-body);flex-shrink:0;line-height:1">
+          ${isPct ? '%' : 'lb'}
+        </button>`;
 
-  let platesHtml = '';
-  if (allDone) {
-    platesHtml = `<div style="text-align:center;padding:16px;font-size:15px;color:var(--teal)">🎉 Session complete!</div>`;
-  } else {
-    let prevPlates = currentPlates;
-    platesHtml = incompletePlan.map((step, idx) => {
-      const setLabel = `Set ${step.setIndex + 1} · ${dw(step.actual)}`;
-      const isNext = idx === 0;
-
-      let instructionHtml = '';
-      if (idx === 0 && currentPlates.length === 0) {
-        // Nothing on bar yet — show full starting load
-        const chips = step.plates.length
-          ? step.plates.map(p => `<span class="chip"><b>${p.count}×</b> ${p.weight} lb</span>`).join('')
-          : '<span class="chip">bar only</span>';
-        instructionHtml = `<div class="plate-chips">${chips}</div>`;
-      } else {
-        // Show delta from what's currently on (or was on for prior incomplete set)
-        const { add, remove } = delta(prevPlates, step.plates);
-        const addChips = add.map(p =>
-          `<span class="chip" style="border-color:#1D9E75"><b style="color:#1D9E75">+${p.count}×</b> ${p.weight} lb</span>`
-        ).join('');
-        const removeChips = remove.map(p =>
-          `<span class="chip" style="border-color:#E24B4A"><b style="color:#E24B4A">−${p.count}×</b> ${p.weight} lb</span>`
-        ).join('');
-        const noChange = !add.length && !remove.length;
-        instructionHtml = noChange
-          ? `<span class="chip-note">No change from previous set</span>`
-          : `<div class="plate-chips">${addChips}${removeChips}</div>`;
-      }
-
-      prevPlates = step.plates;
-
-      const diff = Math.abs(step.actual - step.target);
-      const note = diff > 0.05 ? `<div class="chip-note">Actual: ${dw(step.actual)}</div>` : '';
+      const repsInput = `
+        <input type="number" min="1" max="99" value="${set.reps}"
+          style="width:40px !important;padding:6px 4px !important;font-size:13px !important;text-align:center"
+          onchange="updateSetReps(${bi},${si},this.value)" />
+        <span style="font-size:11px;color:var(--text-3)">×</span>`;
 
       return `
-        <div style="margin-bottom:12px${isNext ? '' : ';opacity:0.6'}">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-            ${isNext ? `<span style="font-size:9px;font-weight:700;font-family:var(--font-display);background:var(--accent);color:#111;padding:3px 8px;border-radius:4px;letter-spacing:0.08em;text-transform:uppercase">NEXT</span>` : ''}
-            <div style="font-size:12px;color:var(--text-2)">${setLabel}</div>
+        <div class="set-row${isDone ? ' done' : ''}" id="sr-${bi}-${si}">
+          <div class="set-num">${si + 1}</div>
+          <div class="pct-wrap" style="gap:4px">
+            ${repsInput}
+            ${valueInput}
+            ${modePill}
           </div>
-          ${instructionHtml}
-          ${note}
+          <div class="set-spacer"></div>
+          <div class="set-weight">${weightDisplay}</div>
+          <div class="set-check${isDone ? ' checked' : ''}" id="sc-${bi}-${si}"
+            onclick="toggleSetCheck(${bi},${si})" role="checkbox" aria-label="Mark set ${si+1} complete">
+            ${isDone ? '✓' : ''}
+          </div>
         </div>`;
-    }).join('<div class="divider"></div>');
-  }
+    }).join('');
+
+    // ── Plate transitions ──────────────────────────────────
+    const incompletePlan = plan.filter((_, si) => !block.checked[si] && targets[si] && targets[si] > 0);
+    const validPlan = plan.filter((_, si) => targets[si] && targets[si] > 0);
+    const allDone = validPlan.length > 0 && incompletePlan.length === 0;
+
+    let currentPlates = [];
+    for (let si = plan.length - 1; si >= 0; si--) {
+      if (block.checked[si]) { currentPlates = plan[si].plates; break; }
+    }
+
+    function plateMap(p) { return Object.fromEntries(p.map(x => [x.weight, x.count])); }
+    function delta(from, to) {
+      const fm = plateMap(from), tm = plateMap(to);
+      const ws = new Set([...Object.keys(fm), ...Object.keys(tm)].map(Number));
+      const add = [], remove = [];
+      for (const w of [...ws].sort((a,b) => b-a)) {
+        const bf = fm[w]||0, af = tm[w]||0;
+        if (af > bf) add.push({weight:w, count:af-bf});
+        if (bf > af) remove.push({weight:w, count:bf-af});
+      }
+      return { add, remove };
+    }
+
+    let platesHtml = '';
+    if (allDone) {
+      platesHtml = `<div style="text-align:center;padding:10px;font-size:14px;color:var(--accent)">🎉 Done!</div>`;
+    } else if (incompletePlan.length > 0) {
+      let prevPlates = currentPlates;
+      platesHtml = incompletePlan.map((step, idx) => {
+        const isNext = idx === 0;
+        const setLabel = `Set ${step.setIndex + 1} · ${dw(step.actual)}`;
+        let instructionHtml = '';
+
+        if (idx === 0 && currentPlates.length === 0) {
+          const chips = step.plates.length
+            ? step.plates.map(p => `<span class="chip"><b>${p.count}×</b> ${p.weight} lb</span>`).join('')
+            : '<span class="chip">bar only</span>';
+          instructionHtml = `<div class="plate-chips">${chips}</div>`;
+        } else {
+          const { add, remove } = delta(prevPlates, step.plates);
+          const addChips = add.map(p => `<span class="chip" style="border-color:var(--green)"><b style="color:var(--green)">+${p.count}×</b> ${p.weight} lb</span>`).join('');
+          const remChips = remove.map(p => `<span class="chip" style="border-color:var(--red)"><b style="color:var(--red)">−${p.count}×</b> ${p.weight} lb</span>`).join('');
+          instructionHtml = (!add.length && !remove.length)
+            ? `<span class="chip-note">No change</span>`
+            : `<div class="plate-chips">${addChips}${remChips}</div>`;
+        }
+
+        prevPlates = step.plates;
+        const diff = Math.abs(step.actual - (targets[step.setIndex] || 0));
+        const note = diff > 0.05 ? `<div class="chip-note">Actual: ${dw(step.actual)}</div>` : '';
+
+        return `
+          <div style="margin-bottom:10px${isNext ? '' : ';opacity:0.5'}">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+              ${isNext ? `<span style="font-size:9px;font-weight:700;font-family:var(--font-display);background:var(--accent);color:#111;padding:3px 8px;border-radius:4px;letter-spacing:0.08em;text-transform:uppercase">NEXT</span>` : ''}
+              <div style="font-size:12px;color:var(--text-2)">${setLabel}</div>
+            </div>
+            ${instructionHtml}${note}
+          </div>`;
+      }).join('<div class="divider"></div>');
+    }
+
+    const prDisplay = pr
+      ? `<div style="background:var(--accent-dim);border-radius:var(--radius);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:0">
+          <span style="font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.08em">${block.rmType}RM PR</span>
+          <span style="font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--accent)">${dw(pr)}</span>
+        </div>`
+      : `<div style="font-size:12px;color:var(--text-3);padding:6px 0">No PR logged yet for this lift.</div>`;
+
+    const blockCount = state.plannerWorkout.length;
+
+    return `
+      <div class="card" id="block-${bi}" style="border:1px solid var(--border);margin-bottom:12px">
+
+        <!-- Block header -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em">
+            Movement ${bi + 1}
+          </div>
+          ${blockCount > 1
+            ? `<button onclick="removeBlock(${bi})"
+                style="background:none;border:none;color:var(--text-3);font-size:18px;cursor:pointer;padding:2px 6px;line-height:1">✕</button>`
+            : ''}
+        </div>
+
+        <!-- Exercise + RM selectors -->
+        <div class="form-row" style="margin-bottom:8px">
+          <label>Exercise</label>
+          <select onchange="updateBlockEx(${bi},this.value)">${exOptions}</select>
+        </div>
+        <div class="form-row" style="margin-bottom:12px">
+          <label>PR type</label>
+          <select onchange="updateBlockRM(${bi},this.value)">
+            <option value="1" ${block.rmType===1?'selected':''}>1RM${prs[1] ? ' · '+dw(prs[1]) : ''}</option>
+            <option value="3" ${block.rmType===3?'selected':''}>3RM${prs[3] ? ' · '+dw(prs[3]) : ''}</option>
+            <option value="5" ${block.rmType===5?'selected':''}>5RM${prs[5] ? ' · '+dw(prs[5]) : ''}</option>
+          </select>
+        </div>
+        ${prDisplay}
+
+        <!-- Set rows -->
+        <div style="margin-top:14px">
+          <div style="display:flex;padding:4px 0 6px;border-bottom:1px solid var(--border);margin-bottom:2px;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;gap:4px">
+            <div style="min-width:22px">#</div>
+            <div style="flex:1">Reps · Load</div>
+            <div style="min-width:72px;text-align:right">Target</div>
+            <div style="width:32px"></div>
+          </div>
+          ${setsHtml}
+          <div style="display:flex;gap:6px;margin-top:10px">
+            <button class="btn" style="flex:1;font-size:12px;padding:7px" onclick="removeSet(${bi})">− Set</button>
+            <button class="btn" style="flex:1;font-size:12px;padding:7px" onclick="addSet(${bi})">+ Set</button>
+          </div>
+        </div>
+
+        <!-- Plate transitions -->
+        ${platesHtml ? `
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+            <div class="card-label" style="margin-bottom:10px">Plates · ${barWeight} lb bar</div>
+            ${platesHtml}
+          </div>` : ''}
+      </div>`;
+  }));
 
   el.innerHTML = `
-    <div class="card">
-      <div class="card-label">Lift</div>
-      <div class="form-row" style="margin-bottom:10px">
-        <label>Exercise</label>
-        <select onchange="updatePlannerEx(this.value)">${exOptions}</select>
-      </div>
-      <div class="form-row" style="margin-bottom:12px">
-        <label>PR type</label>
-        <select onchange="updatePlannerRM(this.value)">
-          <option value="1" ${state.plannerRM===1?'selected':''}>1RM${prs[1] ? ' · ' + dw(prs[1]) : ''}</option>
-          <option value="3" ${state.plannerRM===3?'selected':''}>3RM${prs[3] ? ' · ' + dw(prs[3]) : ''}</option>
-          <option value="5" ${state.plannerRM===5?'selected':''}>5RM${prs[5] ? ' · ' + dw(prs[5]) : ''}</option>
-        </select>
-      </div>
-      ${pr
-        ? `<div style="background:var(--accent-dim);border-radius:var(--radius);padding:12px 14px;display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.08em">Current PR</span>
-            <span style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--accent);letter-spacing:0.03em">${dw(pr)}</span>
-          </div>`
-        : `<div style="font-size:13px;color:var(--text-3);text-align:center;padding:8px">No PR logged yet — log a set first.</div>`
-      }
-    </div>
-
-    <div class="card">
-      <div class="section-head">
-        <div class="card-label" style="margin:0">Sets</div>
-        <div style="display:flex;gap:6px">
-          <button class="btn" style="padding:5px 12px;font-size:13px" onclick="removePlannerSet()">− Remove</button>
-          <button class="btn" style="padding:5px 12px;font-size:13px" onclick="addPlannerSet()">+ Add</button>
-        </div>
-      </div>
-      <div style="display:flex;padding:4px 0 6px;border-bottom:0.5px solid var(--border);margin-bottom:2px;font-size:11px;color:var(--text-3)">
-        <div style="min-width:26px">#</div>
-        <div style="width:80px">% of max</div>
-        <div style="flex:1"></div>
-        <div style="min-width:80px;text-align:right">target</div>
-        <div style="width:36px"></div>
-      </div>
-      ${setsHtml}
-    </div>
-
-    ${pr ? `
-      <div class="card">
-        <div class="card-label">Plates per side · ${barWeight} lb bar</div>
-        ${platesHtml}
-      </div>` : ''}
-  `;
+    ${blocksHtml.join('')}
+    <button class="btn btn-full" style="margin-bottom:16px;padding:13px;font-size:14px" onclick="addBlock()">
+      + Add Movement
+    </button>`;
 }
 
-window.updatePlannerEx = function(id) {
-  state.plannerExId = parseInt(id);
+// ── Planner actions ────────────────────────────────────────
+window.updateBlockEx = function(bi, val) {
+  state.plannerWorkout[bi].exerciseId = parseInt(val);
   renderTab('planner');
 };
 
-window.updatePlannerRM = function(rm) {
-  state.plannerRM = parseInt(rm);
+window.updateBlockRM = function(bi, val) {
+  state.plannerWorkout[bi].rmType = parseInt(val);
   renderTab('planner');
 };
 
-window.updateSetPct = function(i, val) {
+window.updateSetVal = function(bi, si, val) {
+  const n = parseFloat(val);
+  if (!isNaN(n) && n >= 0) { state.plannerWorkout[bi].sets[si].value = n; renderTab('planner'); }
+};
+
+window.updateSetReps = function(bi, si, val) {
   const n = parseInt(val);
-  if (!isNaN(n) && n >= 1 && n <= 200) {
-    state.plannerSets[i] = n;
-    renderTab('planner');
-  }
+  if (!isNaN(n) && n >= 1) { state.plannerWorkout[bi].sets[si].reps = n; renderTab('planner'); }
 };
 
-window.addPlannerSet = function() {
-  if (state.plannerSets.length >= 10) return;
-  state.plannerSets.push(state.plannerSets[state.plannerSets.length - 1] || 70);
-  state.plannerChecked.push(false);
+window.toggleSetMode = function(bi, si) {
+  const set = state.plannerWorkout[bi].sets[si];
+  set.mode = set.mode === 'pct' ? 'lbs' : 'pct';
+  set.value = set.mode === 'pct' ? 75 : 0;
   renderTab('planner');
 };
 
-window.removePlannerSet = function() {
-  if (state.plannerSets.length <= 1) return;
-  state.plannerSets.pop();
-  state.plannerChecked.pop();
-  renderTab('planner');
-};
-
-window.toggleSetCheck = function(i) {
-  const wasChecked = state.plannerChecked[i];
-  state.plannerChecked[i] = !wasChecked;
-
+window.toggleSetCheck = function(bi, si) {
+  const block = state.plannerWorkout[bi];
+  const wasChecked = block.checked[si];
+  block.checked[si] = !wasChecked;
   if (!wasChecked) {
-    // Fire confetti from the checkbox before re-render wipes the element
-    const checkEl = document.getElementById(`sc-${i}`);
-    if (checkEl) burstFromEl(checkEl);
+    const el = document.getElementById(`sc-${bi}-${si}`);
+    if (el) burstFromEl(el);
     showToast();
   }
+  renderTab('planner');
+};
 
-  // Re-render planner so the plates card updates live
+window.addSet = function(bi) {
+  const block = state.plannerWorkout[bi];
+  if (block.sets.length >= 12) return;
+  const last = block.sets[block.sets.length - 1];
+  block.sets.push({ mode: last.mode, value: last.value, reps: last.reps });
+  block.checked.push(false);
+  renderTab('planner');
+};
+
+window.removeSet = function(bi) {
+  const block = state.plannerWorkout[bi];
+  if (block.sets.length <= 1) return;
+  block.sets.pop();
+  block.checked.pop();
+  renderTab('planner');
+};
+
+window.addBlock = function() {
+  state.plannerWorkout.push({
+    exerciseId: state.exercises.length > 0 ? state.exercises[0].id : null,
+    rmType: 1,
+    sets: [
+      { mode: 'pct', value: 50, reps: 5 },
+      { mode: 'pct', value: 75, reps: 5 },
+      { mode: 'pct', value: 85, reps: 5 },
+      { mode: 'pct', value: 85, reps: 5 },
+      { mode: 'pct', value: 85, reps: 5 },
+    ],
+    checked: [false, false, false, false, false],
+  });
+  renderTab('planner');
+  // Scroll to new block
+  setTimeout(() => {
+    const el = document.getElementById(`block-${state.plannerWorkout.length - 1}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
+};
+
+window.removeBlock = function(bi) {
+  if (state.plannerWorkout.length <= 1) return;
+  if (!confirm('Remove this movement?')) return;
+  state.plannerWorkout.splice(bi, 1);
   renderTab('planner');
 };
 
@@ -426,36 +486,30 @@ function showToast() {
     toast = document.createElement('div');
     toast.id = 'nice-toast';
     toast.className = 'nice-toast';
-    const msgs = ['Nice work! 💪', 'Get some! 🔥', 'Beast mode.', "Let's go!", 'Crushed it!'];
-    toast.textContent = msgs[Math.floor(Math.random() * msgs.length)];
     document.body.appendChild(toast);
   }
+  const msgs = ['Nice work! 💪', 'Get some! 🔥', 'Beast mode.', "Let's go!", 'Crushed it!'];
+  toast.textContent = msgs[Math.floor(Math.random() * msgs.length)];
   toast.classList.add('show');
   setTimeout(() => toast.classList.remove('show'), 1800);
 }
 
-// ── Settings Tab ───────────────────────────────────────────
+// ── Settings ───────────────────────────────────────────────
 async function renderSettings(el) {
   el.innerHTML = `
     <div class="card-label" style="margin-bottom:8px">Preferences</div>
     <div class="card">
       <div class="setting-row">
-        <div>
-          <div class="setting-label">Units</div>
-          <div class="setting-sub">Weight display throughout the app</div>
-        </div>
+        <div><div class="setting-label">Units</div><div class="setting-sub">Weight display throughout the app</div></div>
         <select style="width:80px" onchange="setUnit(this.value)">
           <option value="lbs" ${state.unit==='lbs'?'selected':''}>lbs</option>
-          <option value="kg" ${state.unit==='kg'?'selected':''}>kg</option>
+          <option value="kg"  ${state.unit==='kg' ?'selected':''}>kg</option>
         </select>
       </div>
       <div class="setting-row">
-        <div>
-          <div class="setting-label">Default PR window</div>
-          <div class="setting-sub">Used in PRs tab and session planner</div>
-        </div>
+        <div><div class="setting-label">Default PR window</div><div class="setting-sub">Used in PRs tab and planner</div></div>
         <select style="width:130px" onchange="setPRWindow(this.value)">
-          <option value="90" ${state.prWindow==='90'?'selected':''}>3 months</option>
+          <option value="90"  ${state.prWindow==='90' ?'selected':''}>3 months</option>
           <option value="180" ${state.prWindow==='180'?'selected':''}>6 months</option>
           <option value="365" ${state.prWindow==='365'?'selected':''}>1 year</option>
           <option value="all" ${state.prWindow==='all'?'selected':''}>All time</option>
@@ -466,12 +520,8 @@ async function renderSettings(el) {
     <div class="card-label" style="margin-bottom:8px">Equipment</div>
     <div class="card">
       <div class="setting-row">
-        <div>
-          <div class="setting-label">Bar weight</div>
-          <div class="setting-sub">Used in plate calculator</div>
-        </div>
-        <input type="number" value="${state.equipment.barWeight}" style="width:70px;text-align:right"
-          onchange="setBarWeight(this.value)" />
+        <div><div class="setting-label">Bar weight</div><div class="setting-sub">Used in plate calculator</div></div>
+        <input type="number" value="${state.equipment.barWeight}" style="width:70px;text-align:right" onchange="setBarWeight(this.value)" />
       </div>
       <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:10px">
         <div class="setting-label">Plates available (per side)</div>
@@ -481,7 +531,7 @@ async function renderSettings(el) {
     </div>
 
     <div class="card-label" style="margin-bottom:8px">Exercises</div>
-    <div class="card" id="ex-editor">
+    <div class="card">
       ${state.exercises.map(e => `
         <div class="setting-row">
           <div class="setting-label">${e.name}</div>
@@ -489,60 +539,75 @@ async function renderSettings(el) {
         </div>`).join('')}
       <button class="btn btn-ghost" style="padding:4px 0;margin-top:6px" onclick="openAddExercise()">+ Add exercise</button>
     </div>
-  `;
+
+    <div class="card-label" style="margin-bottom:8px">Data</div>
+    <div class="card">
+      <div class="setting-row">
+        <div><div class="setting-label">Export backup</div><div class="setting-sub">Download all your data as JSON</div></div>
+        <button class="btn" onclick="doExport()">Export</button>
+      </div>
+      <div class="setting-row">
+        <div><div class="setting-label">Import backup</div><div class="setting-sub">Restore or merge from a JSON file</div></div>
+        <button class="btn" onclick="doImport()">Import</button>
+      </div>
+    </div>
+
+    <div style="text-align:center;padding:24px 0 8px;font-size:12px;color:var(--text-3)">
+      Iron Log v${VERSION} · ${BUILD_DATE}
+    </div>`;
 
   renderPlateEditor();
 }
+
+window.doExport = async function() {
+  try { await exportBackup(); } catch(e) { alert('Export failed: ' + e.message); }
+};
+
+window.doImport = function() {
+  importBackup(async () => {
+    state.exercises = await getExercises();
+    state.equipment = await getEquipment();
+    renderTab('settings');
+  });
+};
 
 function renderPlateEditor() {
   const el = document.getElementById('plate-editor');
   if (!el) return;
   el.innerHTML = state.equipment.plates.map((p, i) => `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <input type="number" value="${p.weight}" style="width:70px;text-align:right"
-        onchange="updatePlate(${i},'weight',this.value)" /> lb
+      <input type="number" value="${p.weight}" style="width:70px;text-align:right" onchange="updatePlate(${i},'weight',this.value)" /> lb
       <span style="color:var(--text-2);font-size:13px">×</span>
-      <input type="number" value="${p.count}" min="0" max="20" style="width:50px;text-align:center"
-        onchange="updatePlate(${i},'count',this.value)" />
+      <input type="number" value="${p.count}" min="0" max="20" style="width:50px;text-align:center" onchange="updatePlate(${i},'count',this.value)" />
       <button class="btn btn-ghost" style="color:var(--text-3)" onclick="removePlate(${i})">✕</button>
     </div>`).join('');
 }
 
-window.setUnit = async function(val) {
-  state.unit = val;
-  await setPref('unit', val);
-};
-
+window.setUnit = async function(val) { state.unit = val; await setPref('unit', val); };
 window.setBarWeight = async function(val) {
-  const n = parseFloat(val);
-  if (isNaN(n)) return;
+  const n = parseFloat(val); if (isNaN(n)) return;
   state.equipment.barWeight = n;
   const { saveEquipment } = await import('./db.js');
   await saveEquipment(state.equipment);
 };
-
 window.updatePlate = async function(i, field, val) {
-  const n = parseFloat(val);
-  if (isNaN(n)) return;
+  const n = parseFloat(val); if (isNaN(n)) return;
   state.equipment.plates[i][field] = n;
   const { saveEquipment } = await import('./db.js');
   await saveEquipment(state.equipment);
 };
-
 window.removePlate = async function(i) {
   state.equipment.plates.splice(i, 1);
   const { saveEquipment } = await import('./db.js');
   await saveEquipment(state.equipment);
   renderPlateEditor();
 };
-
 window.addPlateType = async function() {
   state.equipment.plates.push({ weight: 2.5, count: 2 });
   const { saveEquipment } = await import('./db.js');
   await saveEquipment(state.equipment);
   renderPlateEditor();
 };
-
 window.deleteEx = async function(id) {
   if (!confirm('Delete this exercise? Your logged sets will remain.')) return;
   const { deleteExercise } = await import('./db.js');
@@ -550,7 +615,6 @@ window.deleteEx = async function(id) {
   state.exercises = await getExercises();
   renderTab('settings');
 };
-
 window.openAddExercise = function() {
   const name = prompt('Exercise name:');
   if (!name?.trim()) return;
@@ -561,5 +625,4 @@ window.openAddExercise = function() {
   })();
 };
 
-// ── Start ──────────────────────────────────────────────────
 boot();

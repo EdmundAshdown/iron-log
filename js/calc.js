@@ -36,6 +36,23 @@ export function displayWeight(lbs, unit) {
   return lbs + ' lbs';
 }
 
+const METRES_PER_MILE = 1609.344;
+
+// Distances are stored in metres, like weight is stored in lbs. Imperial
+// users see miles, metric users see km; anything under 0.1 mi / 1 km stays
+// in metres, which is how short erg distances are actually read.
+export function displayDistance(metres, unit = 'lbs') {
+  if (!Number.isFinite(metres)) return '';
+
+  if (unit === 'kg') {
+    return metres >= 1000 ? `${Math.round(metres / 100) / 10} km` : `${Math.round(metres)} m`;
+  }
+
+  const miles = metres / METRES_PER_MILE;
+  if (miles < 0.1) return `${Math.round(metres)} m`;
+  return `${miles >= 10 ? Math.round(miles) : Math.round(miles * 10) / 10} mi`;
+}
+
 // Increment for the Log modal's weight steppers. A "coarse" step moves
 // roughly one plate pair; a "fine" step moves the smallest plate.
 // Defaults to the coarse step.

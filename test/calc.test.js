@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { weightStep, toKg, toLbs, targetFromPct, calcPlates } from '../js/calc.js';
+import { weightStep, toKg, toLbs, targetFromPct, calcPlates, displayDistance } from '../js/calc.js';
 
 test('weightStep is unit aware', () => {
   assert.equal(weightStep('lbs', true), 2.5);
@@ -28,4 +28,20 @@ test('calcPlates loads the closest achievable weight', () => {
   assert.equal(calcPlates(225, 45, plates).actual, 225);
   // 226 is not loadable in 2.5 lb increments from this inventory
   assert.equal(calcPlates(226, 45, plates).actual, 225);
+});
+
+test('displayDistance follows the unit preference', () => {
+  // Imperial: miles above 0.1 mi, metres below.
+  assert.equal(displayDistance(5000, 'lbs'), '3.1 mi');
+  assert.equal(displayDistance(1609.344, 'lbs'), '1 mi');
+  assert.equal(displayDistance(402.336, 'lbs'), '0.3 mi');
+  assert.equal(displayDistance(100, 'lbs'), '100 m');
+  assert.equal(displayDistance(16093, 'lbs'), '10 mi');
+
+  // Metric: km above 1000 m, metres below.
+  assert.equal(displayDistance(5000, 'kg'), '5 km');
+  assert.equal(displayDistance(1200, 'kg'), '1.2 km');
+  assert.equal(displayDistance(400, 'kg'), '400 m');
+
+  assert.equal(displayDistance(NaN, 'lbs'), '');
 });

@@ -240,6 +240,84 @@ select:focus, input:focus { border-color: var(--accent); }
 #fab:active { transform: scale(0.93); }
 #fab.hidden { display: none; }
 
+/* ── Rest timer bar ──────────────────────────────────── */
+.rest-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--nav-h);
+  max-width: 480px;
+  margin: 0 auto;
+  z-index: 110;
+  background: var(--surface);
+  border-top: 1px solid var(--border-md);
+  box-shadow: 0 -6px 18px rgba(0,0,0,0.35);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.rest-progress {
+  height: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.rest-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.25s linear;
+}
+
+.rest-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+}
+
+.rest-clock {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.rest-actions { display: flex; gap: 6px; }
+
+.rest-btn {
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius);
+}
+
+.rest-bar.paused .rest-clock { color: var(--text-2); }
+.rest-bar.paused .rest-fill { background: var(--text-3); }
+.rest-bar.done .rest-clock { color: var(--green); font-size: 22px; }
+.rest-bar.done .rest-fill { background: var(--green); }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rest-start {
+  font-size: 13px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius);
+  color: var(--text-2);
+}
+
+/* Keep the last row of a list clear of the timer bar. */
+body.rest-active #content { padding-bottom: 104px; }
+
 /* ── Stat grid ───────────────────────────────────────── */
 .stat-grid {
   display: grid;

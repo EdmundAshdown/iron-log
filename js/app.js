@@ -1,11 +1,12 @@
 import { openDB, seedIfEmpty, getExercises, getSets, addSet, addSets, deleteSet, deleteSetsByGroup, getAllPRs, getPref, setPref, getEquipment, getLastSetForExercise, updateExerciseMetric } from './db.js';
-import { calcPlates, targetFromPct, displayWeight, buildSessionPlan, toKg, toLbs, weightStep } from './calc.js';
+import { calcPlates, targetFromPct, displayWeight, displayDistance, buildSessionPlan, toKg, toLbs, weightStep } from './calc.js';
 import { burstFromEl } from './confetti.js';
 import { exportBackup, importBackup } from './backup.js';
 import { VERSION, BUILD_DATE } from './version.js';
 import { localDateStr } from './dates.js';
 import { METRIC_LABELS, SET_TYPES } from './schema.js';
 import { newGroupId, groupByCircuit } from './circuits.js';
+import { newTimer, tick as tickTimer, extend as extendTimer, pause as pauseTimer, resume as resumeTimer, progress as timerProgress, formatClock } from './timer.js';
 
 // ── State ──────────────────────────────────────────────────
 let state = {
@@ -15,6 +16,7 @@ let state = {
   exercises: [],
   equipment: { barWeight: 45, plates: [] },
   prWindow: '365',
+  restSeconds: 90,
   plannerWorkout: [
     {
       exerciseId: null,
@@ -40,6 +42,7 @@ async function boot() {
   state.equipment = await getEquipment();
   state.unit = await getPref('unit', 'lbs');
   state.prWindow = await getPref('prWindow', '365');
+  state.restSeconds = await getPref('restSeconds', 90);
 
   // Assign first lift to first planner block
   const lifts = strengthExercises();
@@ -102,14 +105,10 @@ function fmtDuration(sec) {
   return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
 }
 
-function fmtDistance(metres) {
-  return metres >= 1000 ? `${Math.round(metres / 100) / 10} km` : `${Math.round(metres)} m`;
-}
-
 function setDetail(s) {
   switch (s.type) {
     case 'timed':    return fmtDuration(s.duration);
-    case 'distance': return fmtDistance(s.distance);
+    case 'distance': return displayDistance(s.distance, state.unit);
     case 'output':   return `${s.output} output`;
     default:         return `${s.reps} rep${s.reps !== 1 ? 's' : ''}`;
   }
@@ -148,7 +147,10 @@ async function renderLog(el) {
       <div class="stat"><div class="stat-val accent">${prCount}</div><div class="stat-lbl">PRs today</div></div>
     </div>
     <div class="card">
-      <div class="card-label">Today · ${new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</div>
+      <div class="card-head">
+        <div class="card-label">Today · ${new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</div>
+        <button class="btn btn-ghost rest-start" onclick="startRest()">⏱ Rest</button>
+      </div>
       ${setsHtml}
     </div>`;
 
@@ -204,6 +206,137 @@ window.deleteCircuit = async function(groupId) {
   if (!confirm('Delete this whole circuit?')) return;
   await deleteSetsByGroup(groupId);
   renderTab('log');
+};
+
+// ── Rest timer ─────────────────────────────────────────────
+// Counts down between sets. The model lives in js/timer.js; this section
+// owns the interval, the beep, and the bar at the bottom of the screen.
+// The bar sits outside the tab content, so it keeps running and stays
+// visible while you move around the app.
+
+const REST_OPTIONS = [
+  { value: 0,   label: 'Off' },
+  { value: 30,  label: '30 seconds' },
+  { value: 60,  label: '1 minute' },
+  { value: 90,  label: '1:30' },
+  { value: 120, label: '2 minutes' },
+  { value: 180, label: '3 minutes' },
+  { value: 300, label: '5 minutes' },
+];
+
+let restTimer = null;        // timer state, or null when there is no rest running
+let restInterval = null;
+let restLastTick = 0;
+let audioCtx = null;
+
+// Browsers only allow audio after a gesture, so create the context from the
+// click that starts the rest (not from the tick that finishes it).
+function primeAudio() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  if (!audioCtx) audioCtx = new Ctx();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function beep() {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = 880;
+  gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.4);
+}
+
+function restFinished() {
+  try { navigator.vibrate?.([200, 100, 200]); } catch { /* not supported */ }
+  try { beep(); } catch { /* audio blocked */ }
+}
+
+function startRestLoop() {
+  if (restInterval !== null) return;
+  restLastTick = Date.now();
+  restInterval = setInterval(restTick, 250);
+}
+
+function stopRestLoop() {
+  if (restInterval === null) return;
+  clearInterval(restInterval);
+  restInterval = null;
+}
+
+function restTick() {
+  if (!restTimer) return;
+  const now = Date.now();
+  const delta = now - restLastTick;
+  restLastTick = now;
+
+  const wasDone = restTimer.done;
+  restTimer = tickTimer(restTimer, delta);
+  if (!wasDone && restTimer.done) {
+    stopRestLoop();
+    restFinished();
+  }
+  renderRestBar();
+}
+
+function renderRestBar() {
+  const bar = document.getElementById('rest-bar');
+  if (!bar) return;
+
+  document.body.classList.toggle('rest-active', !!restTimer);
+
+  if (!restTimer) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  bar.classList.toggle('done', restTimer.done);
+  bar.classList.toggle('paused', !restTimer.running && !restTimer.done);
+
+  document.getElementById('rest-clock').textContent =
+    restTimer.done ? 'Rest done' : formatClock(restTimer.remainingMs);
+  document.getElementById('rest-fill').style.width =
+    `${Math.round(Math.min(1, Math.max(0, timerProgress(restTimer))) * 100)}%`;
+  document.getElementById('rest-pause').textContent =
+    restTimer.done ? 'Restart' : (restTimer.running ? 'Pause' : 'Resume');
+}
+
+window.startRest = function(seconds) {
+  const secs = Number(seconds);
+  const duration = Number.isFinite(secs) && secs > 0 ? secs : state.restSeconds;
+  if (!duration || duration <= 0) return;   // timer is off
+
+  primeAudio();
+  restTimer = newTimer(duration);
+  startRestLoop();
+  renderRestBar();
+};
+
+window.extendRest = function(sec) {
+  if (!restTimer) return;
+  restTimer = extendTimer(restTimer, sec);
+  startRestLoop();
+  renderRestBar();
+};
+
+window.toggleRestPause = function() {
+  if (!restTimer) return;
+  if (restTimer.done) { startRest(restTimer.durationMs / 1000); return; }
+  restTimer = restTimer.running ? pauseTimer(restTimer) : resumeTimer(restTimer);
+  renderRestBar();
+};
+
+window.skipRest = function() {
+  restTimer = null;
+  stopRestLoop();
+  renderRestBar();
+};
+
+window.setRestSeconds = async function(val) {
+  const n = parseInt(val, 10);
+  state.restSeconds = Number.isFinite(n) ? n : 0;
+  await setPref('restSeconds', state.restSeconds);
 };
 
 // ── Log modal ──────────────────────────────────────────────
@@ -323,7 +456,7 @@ window.refreshModalCalc = function() {
   document.querySelectorAll('#log-modal .chip-note[data-hint]').forEach(el => {
     const v = fieldValue(el.dataset.hint, el.dataset.hintKey);
     if (v === null) { el.textContent = ''; return; }
-    el.textContent = el.dataset.hintKey === 'duration' ? fmtDuration(v) : fmtDistance(v);
+    el.textContent = el.dataset.hintKey === 'duration' ? fmtDuration(v) : displayDistance(v, state.unit);
   });
 
   document.querySelectorAll('#log-modal [data-plates]').forEach(platesEl => {
@@ -572,6 +705,7 @@ window.submitLog = async function() {
   }
 
   state.lastExerciseId = exId;
+  startRest();   // no-op when the rest timer is off
   closeLogModal();
   renderTab('log');
 };
@@ -605,6 +739,7 @@ async function submitCircuit() {
   }
 
   state.lastExerciseId = circuitItems[0].exerciseId;
+  startRest();   // one rest after the whole circuit; per-round rest comes later
   closeLogModal();
   renderTab('log');
 }
@@ -966,6 +1101,12 @@ async function renderSettings(el) {
           <option value="180" ${state.prWindow==='180'?'selected':''}>6 months</option>
           <option value="365" ${state.prWindow==='365'?'selected':''}>1 year</option>
           <option value="all" ${state.prWindow==='all'?'selected':''}>All time</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div><div class="setting-label">Rest timer</div><div class="setting-sub">Counts down after you save a set</div></div>
+        <select style="width:130px" onchange="setRestSeconds(this.value)">
+          ${REST_OPTIONS.map(o => `<option value="${o.value}" ${String(state.restSeconds) === String(o.value) ? 'selected' : ''}>${o.label}</option>`).join('')}
         </select>
       </div>
     </div>

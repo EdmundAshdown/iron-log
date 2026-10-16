@@ -43,6 +43,19 @@
 
 <button id="fab" aria-label="Log a set">+</button>
 
+<!-- Rest timer bar: shown while a rest is counting down -->
+<div class="rest-bar hidden" id="rest-bar">
+  <div class="rest-progress"><div class="rest-fill" id="rest-fill"></div></div>
+  <div class="rest-row">
+    <div class="rest-clock" id="rest-clock">0:00</div>
+    <div class="rest-actions">
+      <button type="button" class="btn btn-ghost rest-btn" onclick="extendRest(30)">+30s</button>
+      <button type="button" class="btn btn-ghost rest-btn" id="rest-pause" onclick="toggleRestPause()">Pause</button>
+      <button type="button" class="btn btn-ghost rest-btn" onclick="skipRest()">Skip</button>
+    </div>
+  </div>
+</div>
+
 <!-- Log set modal -->
 <div class="modal-overlay" id="log-modal" role="dialog" aria-modal="true" aria-label="Log a set">
   <div class="modal-sheet">

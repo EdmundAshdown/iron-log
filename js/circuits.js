@@ -12,20 +12,20 @@ export function newGroupId() {
 // Group sets (in display order) into blocks. Standalone sets each become
 // their own single-item block so the caller can render one list. Blocks
 // appear in the order each is first seen; a circuit's items are ordered by
-// round, then id.
+// round, then id, and `restSec` is lifted off the sets for convenience.
 export function groupByCircuit(sets) {
   const blocks = [];
   const byGroup = new Map();
 
   for (const set of sets) {
     if (!set.groupId) {
-      blocks.push({ groupId: null, rounds: 1, items: [set] });
+      blocks.push({ groupId: null, rounds: 1, restSec: null, items: [set] });
       continue;
     }
 
     let block = byGroup.get(set.groupId);
     if (!block) {
-      block = { groupId: set.groupId, rounds: 0, items: [] };
+      block = { groupId: set.groupId, rounds: 0, restSec: null, items: [] };
       byGroup.set(set.groupId, block);
       blocks.push(block);
     }
@@ -36,6 +36,7 @@ export function groupByCircuit(sets) {
     if (!block.groupId) continue;
     block.items.sort((a, b) => (a.round ?? 0) - (b.round ?? 0) || (a.id ?? 0) - (b.id ?? 0));
     block.rounds = new Set(block.items.map(s => s.round)).size;
+    block.restSec = block.items.find(s => s.restSec)?.restSec ?? null;
   }
 
   return blocks;

@@ -5,7 +5,7 @@ A mobile-first PWA gym workout tracker. Tracks PRs, plans full workout sessions 
 ## Features
 
 - **Log** — Log sets (exercise, weight, reps). PRs are auto-detected and badged. Supersets and circuits log as a group with round numbers.
-- **Rest timer** — Counts down between sets, with +30s, pause and skip.
+- **Rest timer** — Counts down between sets, with +30s, pause and skip. Circuits carry their own between-rounds interval and can be paced round by round.
 - **PRs** — View 1RM, 3RM, 5RM per exercise with configurable date window and all-time fallback.
 - **Planner** — Build full workout sessions with multiple movements. Per-set % or flat lbs input, rep counts, live plate transition instructions.
 - **Settings** — Units (lbs/kg), bar weight, plate inventory, exercise management, rest timer, JSON backup/restore.
@@ -71,9 +71,9 @@ fields are meaningful (see `js/schema.js`):
 | `output`   | `output` (count)       | 30 calories      |
 
 Every set also stores `exerciseId`, `date` (`YYYY-MM-DD`), `notes`, and —
-for circuit members — `groupId` and `round`. Records written before v2 have
-no `type` and are treated as `strength`; IndexedDB is migrated in place on
-upgrade (`DB_VERSION` in `js/db.js`).
+for circuit members — `groupId`, `round` and `restSec`. Records written
+before v2 have no `type` and are treated as `strength`; IndexedDB is migrated
+in place on upgrade (`DB_VERSION` in `js/db.js`).
 
 Each exercise declares which metric it logs (Settings → Exercises), and the
 Log modal renders the matching inputs. Exercises predating v3 default to
@@ -84,10 +84,11 @@ Log modal renders the matching inputs. Exercises predating v3 default to
 The Log modal has a **Circuit** mode: pick two or more exercises, set a round
 count, and every round × exercise combination is written in one transaction.
 There is no separate circuit entity — the sets themselves carry a shared
-`groupId` and a 1-based `round`, and sets without a `groupId` are standalone
-(see `js/circuits.js`). The Log tab groups sets by `groupId` and renders them
-round by round with a block-level delete. Because the group is just fields on
-the sets, backups, restores and older app versions all keep working.
+`groupId`, a 1-based `round`, and the circuit's `restSec`; sets without a
+`groupId` are standalone (see `js/circuits.js`). The Log tab groups sets by
+`groupId` and renders them round by round, with the protocol in the header and
+a block-level delete. Because the group is just fields on the sets, backups,
+restores and older app versions all keep working.
 
 ### Rest timer
 
@@ -95,8 +96,15 @@ Saving a set starts a countdown in a bar above the bottom nav (default 90s;
 set it in Settings → Rest timer, or choose **Off**). The bar keeps running
 while you move between tabs, and the app beeps and vibrates at zero. The
 countdown model in `js/timer.js` is pure and unit-tested; `js/app.js` owns the
-interval, the audio and the bar. Logging a circuit starts a single rest at the
-end — per-round rest intervals are not built yet.
+interval, the audio and the bar.
+
+A circuit can override the rest between rounds — **Rest between rounds** in the
+circuit builder, where *Default* follows the setting above — and the saved
+circuit shows that interval in its header. **▶ Run** on a saved circuit paces
+you through it: it starts the rest for round 1, and when that finishes the
+middle button becomes **Next rest** for the following round, up to the last
+one, which ends with "Circuit done". The bar shows the round each rest leads
+into.
 
 ### Units
 

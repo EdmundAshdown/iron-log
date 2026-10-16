@@ -36,8 +36,9 @@ export function normalizeExercise(exercise = {}) {
 export const BACKUP_VERSION = 3;
 
 // Fill in defaults so every consumer can assume a uniform shape.
-// `groupId`/`round` mark membership of a circuit (see circuits.js);
-// standalone sets have groupId null.
+// `groupId`/`round` mark membership of a circuit, and `restSec` carries the
+// circuit's rest-between-rounds interval (see circuits.js); standalone sets
+// have groupId null.
 export function normalizeSet(set = {}) {
   const type = SET_TYPES.includes(set.type) ? set.type : 'strength';
   return {
@@ -46,6 +47,7 @@ export function normalizeSet(set = {}) {
     notes: set.notes ?? '',
     groupId: set.groupId ?? null,
     round: Number.isInteger(set.round) && set.round > 0 ? set.round : null,
+    restSec: Number.isFinite(set.restSec) && set.restSec > 0 ? Math.round(set.restSec) : null,
   };
 }
 

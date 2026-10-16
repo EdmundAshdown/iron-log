@@ -6,7 +6,7 @@ import { VERSION, BUILD_DATE } from './version.js';
 import { localDateStr } from './dates.js';
 import { METRIC_LABELS, SET_TYPES } from './schema.js';
 import { newGroupId, groupByCircuit } from './circuits.js';
-import { newTimer, tick as tickTimer, extend as extendTimer, pause as pauseTimer, resume as resumeTimer, progress as timerProgress, formatClock } from './timer.js';
+import { newTimer, tick as tickTimer, extend as extendTimer, pause as pauseTimer, resume as resumeTimer, progress as timerProgress, formatClock, nextRound } from './timer.js';
 
 // ── State ──────────────────────────────────────────────────
 let state = {
@@ -175,6 +175,7 @@ function setRowHtml(s, exMap) {
 // A circuit (superset): the sets sharing one groupId, shown round by round.
 function circuitBlockHtml(block, exMap) {
   const exerciseCount = new Set(block.items.map(s => s.exerciseId)).size;
+  const rest = block.restSec ? ` · ${formatClock(block.restSec * 1000)} rest` : '';
   const rows = block.items.map(s => `
     <div class="circuit-row">
       <span class="circuit-round">R${s.round ?? 1}</span>
@@ -188,9 +189,12 @@ function circuitBlockHtml(block, exMap) {
       <div class="circuit-head">
         <div>
           <span class="circuit-title">Circuit</span>
-          <span class="circuit-meta">${block.rounds} round${block.rounds !== 1 ? 's' : ''} · ${exerciseCount} exercises</span>
+          <span class="circuit-meta">${block.rounds} round${block.rounds !== 1 ? 's' : ''} · ${exerciseCount} exercises${rest}</span>
         </div>
-        <button class="btn btn-ghost circuit-delete" onclick="deleteCircuit('${block.groupId}')">Delete</button>
+        <div class="circuit-actions">
+          <button class="btn btn-ghost circuit-run" onclick="runCircuit('${block.groupId}')">▶ Run</button>
+          <button class="btn btn-ghost circuit-delete" onclick="deleteCircuit('${block.groupId}')">Delete</button>
+        </div>
       </div>
       ${rows}
     </div>`;
@@ -222,6 +226,13 @@ const REST_OPTIONS = [
   { value: 120, label: '2 minutes' },
   { value: 180, label: '3 minutes' },
   { value: 300, label: '5 minutes' },
+];
+
+// A circuit can override the rest between rounds. -1 follows the setting
+// above rather than duplicating a number that would then drift from it.
+const CIRCUIT_REST_OPTIONS = [
+  { value: -1, label: 'Default' },
+  ...REST_OPTIONS.filter(o => o.value > 0),
 ];
 
 let restTimer = null;        // timer state, or null when there is no rest running
@@ -294,21 +305,33 @@ function renderRestBar() {
   bar.classList.toggle('done', restTimer.done);
   bar.classList.toggle('paused', !restTimer.running && !restTimer.done);
 
-  document.getElementById('rest-clock').textContent =
-    restTimer.done ? 'Rest done' : formatClock(restTimer.remainingMs);
+  const seq = restTimer.sequence;
+  const upcoming = restTimer.done ? nextRound(restTimer) : null;
+
+  const roundEl = document.getElementById('rest-round');
+  roundEl.classList.toggle('hidden', !seq);
+  if (seq) roundEl.textContent = `Round ${seq.round}/${seq.total}`;
+
+  document.getElementById('rest-clock').textContent = !restTimer.done
+    ? formatClock(restTimer.remainingMs)
+    : (seq && !upcoming ? 'Circuit done' : 'Rest done');
+
   document.getElementById('rest-fill').style.width =
     `${Math.round(Math.min(1, Math.max(0, timerProgress(restTimer))) * 100)}%`;
-  document.getElementById('rest-pause').textContent =
-    restTimer.done ? 'Restart' : (restTimer.running ? 'Pause' : 'Resume');
+
+  document.getElementById('rest-pause').textContent = !restTimer.done
+    ? (restTimer.running ? 'Pause' : 'Resume')
+    : (upcoming ? 'Next rest' : 'Restart');
 }
 
-window.startRest = function(seconds) {
+// `round`/`total` are only passed by a circuit run; a plain rest has neither.
+window.startRest = function(seconds, round, total) {
   const secs = Number(seconds);
   const duration = Number.isFinite(secs) && secs > 0 ? secs : state.restSeconds;
   if (!duration || duration <= 0) return;   // timer is off
 
   primeAudio();
-  restTimer = newTimer(duration);
+  restTimer = newTimer(duration, round && total ? { round, total } : null);
   startRestLoop();
   renderRestBar();
 };
@@ -322,7 +345,17 @@ window.extendRest = function(sec) {
 
 window.toggleRestPause = function() {
   if (!restTimer) return;
-  if (restTimer.done) { startRest(restTimer.durationMs / 1000); return; }
+  const durationSec = restTimer.durationMs / 1000;
+  const seq = restTimer.sequence;
+
+  // A finished rest either advances the circuit or starts over.
+  if (restTimer.done) {
+    const upcoming = nextRound(restTimer);
+    if (upcoming) startRest(durationSec, upcoming, seq.total);
+    else startRest(durationSec, seq ? 1 : undefined, seq ? seq.total : undefined);
+    return;
+  }
+
   restTimer = restTimer.running ? pauseTimer(restTimer) : resumeTimer(restTimer);
   renderRestBar();
 };
@@ -541,9 +574,16 @@ function renderModalForExercise(exerciseId) {
 // whole thing is logged in one go. Every set gets the same `groupId` and a
 // 1-based `round`, which is what the Log tab groups on (see circuits.js).
 let logMode = 'single';
-let circuitItems = [];   // [{ exerciseId, metric }]
+let circuitItems = [];      // [{ exerciseId, metric }]
+let circuitRounds = 3;
+let circuitRestSec = -1;    // -1 = follow the global rest setting
 
 const circuitScope = index => `f-c${index}-`;
+
+// The rest to use between rounds: the circuit's own value, or the global one.
+function resolveCircuitRest() {
+  return circuitRestSec < 0 ? state.restSeconds : circuitRestSec;
+}
 
 // Keep whatever has been typed when the list re-renders, keyed by exercise
 // so removing an item doesn't shift values onto the wrong one.
@@ -577,7 +617,16 @@ function restoreCircuitValues(snap) {
 function renderCircuit(snap = snapshotCircuitValues()) {
   const listEl = document.getElementById('circuit-list');
   const addSel = document.getElementById('circuit-add');
+  const roundsEl = document.getElementById('circuit-rounds');
+  const restEl = document.getElementById('circuit-rest');
   const chosen = new Set(circuitItems.map(i => i.exerciseId));
+
+  if (roundsEl && document.activeElement !== roundsEl) roundsEl.value = String(circuitRounds);
+  if (restEl) {
+    restEl.innerHTML = CIRCUIT_REST_OPTIONS
+      .map(o => `<option value="${o.value}" ${o.value === circuitRestSec ? 'selected' : ''}>${o.label}</option>`)
+      .join('');
+  }
 
   addSel.innerHTML = '<option value="">+ Add exercise…</option>' +
     state.exercises
@@ -619,9 +668,30 @@ window.removeCircuitItem = function(index) {
 };
 
 window.stepRounds = function(sign) {
+  circuitRounds = Math.max(1, Math.min(20, circuitRounds + sign));
   const el = document.getElementById('circuit-rounds');
-  const cur = parseInt(el.value, 10);
-  el.value = Math.max(1, Math.min(20, (Number.isFinite(cur) ? cur : 1) + sign));
+  if (el) el.value = String(circuitRounds);
+};
+
+window.setCircuitRest = function(val) {
+  const n = parseInt(val, 10);
+  circuitRestSec = Number.isFinite(n) ? n : -1;
+};
+
+// Walk a saved circuit round by round, resting between rounds. The rest is
+// labelled with the round it leads into, so tapping Run after round 1 rests
+// you before round 2.
+window.runCircuit = async function(groupId) {
+  const sets = (await getSets()).filter(s => s.groupId === groupId);
+  if (sets.length === 0) return;
+
+  const restSec = sets.find(s => s.restSec)?.restSec || state.restSeconds;
+  if (!restSec || restSec <= 0) {
+    alert('No rest interval for this circuit. Set one in Settings → Rest timer.');
+    return;
+  }
+
+  startRest(restSec, 1, new Set(sets.map(s => s.round)).size);
 };
 
 window.setLogMode = function(mode) {
@@ -716,7 +786,9 @@ async function submitCircuit() {
 
   const rounds = parseInt(document.getElementById('circuit-rounds').value, 10);
   if (!Number.isInteger(rounds) || rounds < 1) { alert('Enter a number of rounds.'); return; }
+  circuitRounds = rounds;   // remembered for the next circuit
 
+  const restSec = resolveCircuitRest();
   const notes = document.getElementById('modal-notes').value.trim();
   const groupId = newGroupId();
   const date = todayStr();
@@ -724,7 +796,8 @@ async function submitCircuit() {
   const built = [];
   for (let round = 1; round <= rounds; round++) {
     circuitItems.forEach((item, i) => {
-      built.push(buildSetPayload(item.exerciseId, item.metric, circuitScope(i), { date, notes, groupId, round }));
+      built.push(buildSetPayload(item.exerciseId, item.metric, circuitScope(i),
+        { date, notes, groupId, round, restSec: restSec > 0 ? restSec : null }));
     });
   }
 
@@ -739,7 +812,7 @@ async function submitCircuit() {
   }
 
   state.lastExerciseId = circuitItems[0].exerciseId;
-  startRest();   // one rest after the whole circuit; per-round rest comes later
+  if (restSec > 0) startRest(restSec);   // rest at the circuit's own interval
   closeLogModal();
   renderTab('log');
 }

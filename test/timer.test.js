@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newTimer, tick, extend, pause, resume, progress, formatClock } from '../js/timer.js';
+import { newTimer, tick, extend, pause, resume, progress, formatClock, nextRound } from '../js/timer.js';
 
 test('newTimer starts full and running', () => {
   const t = newTimer(90);
@@ -8,6 +8,22 @@ test('newTimer starts full and running', () => {
   assert.equal(t.remainingMs, 90000);
   assert.equal(t.running, true);
   assert.equal(t.done, false);
+  assert.equal(t.sequence, null);
+});
+
+test('newTimer carries a circuit sequence through the countdown', () => {
+  const t = newTimer(30, { round: 1, total: 3 });
+  assert.deepEqual(t.sequence, { round: 1, total: 3 });
+  assert.deepEqual(tick(t, 5000).sequence, { round: 1, total: 3 });
+  assert.deepEqual(extend(t, 30).sequence, { round: 1, total: 3 });
+  assert.deepEqual(pause(t).sequence, { round: 1, total: 3 });
+});
+
+test('nextRound walks the sequence and stops at the end', () => {
+  assert.equal(nextRound(newTimer(30, { round: 1, total: 3 })), 2);
+  assert.equal(nextRound(newTimer(30, { round: 2, total: 3 })), 3);
+  assert.equal(nextRound(newTimer(30, { round: 3, total: 3 })), null);
+  assert.equal(nextRound(newTimer(30)), null);
 });
 
 test('newTimer with no duration is immediately done', () => {

@@ -46,6 +46,22 @@ test('groupByCircuit preserves first-seen group order', () => {
   assert.deepEqual(blocks.map(b => b.groupId), ['b', 'a']);
 });
 
+test('groupByCircuit lifts the rest interval off the group', () => {
+  const blocks = groupByCircuit([
+    { id: 1, exerciseId: 1, groupId: 'g1', round: 1, restSec: 90 },
+    { id: 2, exerciseId: 2, groupId: 'g1', round: 1, restSec: 90 },
+    { id: 3, exerciseId: 1, groupId: 'g1', round: 2, restSec: 90 },
+    { id: 4, exerciseId: 3, groupId: null },
+  ]);
+  assert.equal(blocks[0].restSec, 90);
+  assert.equal(blocks[1].restSec, null);
+});
+
+test('groupByCircuit reports no rest when the group has none', () => {
+  const blocks = groupByCircuit([{ id: 1, exerciseId: 1, groupId: 'g1', round: 1 }]);
+  assert.equal(blocks[0].restSec, null);
+});
+
 test('groupByCircuit handles an empty list', () => {
   assert.deepEqual(groupByCircuit([]), []);
 });

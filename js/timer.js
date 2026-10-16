@@ -3,9 +3,19 @@
 // The app drives it with an interval; every function returns a new state
 // rather than mutating, and nothing here touches `Date`.
 
-export function newTimer(durationSec) {
+// `sequence` is optional context for a circuit run — which round this rest
+// leads into, out of how many. It rides along through tick/extend/pause.
+export function newTimer(durationSec, sequence = null) {
   const ms = Math.max(0, Math.round(durationSec * 1000));
-  return { durationMs: ms, remainingMs: ms, running: ms > 0, done: ms === 0 };
+  return { durationMs: ms, remainingMs: ms, running: ms > 0, done: ms === 0, sequence };
+}
+
+// The round a finished rest leads into, or null when the run is over (or
+// this isn't a sequenced rest).
+export function nextRound(timer) {
+  const seq = timer.sequence;
+  if (!seq || seq.round >= seq.total) return null;
+  return seq.round + 1;
 }
 
 // Advance a running timer by the time since the last tick. Callers pass a

@@ -49,13 +49,38 @@
     <div class="modal-handle"></div>
     <div class="modal-title" id="modal-title">Log a set</div>
 
-    <div class="form-row">
-      <label for="modal-exercise">Exercise</label>
-      <select id="modal-exercise" onchange="onLogExerciseChange(this.value)"></select>
+    <div class="mode-toggle">
+      <button type="button" class="mode-btn active" data-mode="single" onclick="setLogMode('single')">Single set</button>
+      <button type="button" class="mode-btn" data-mode="circuit" onclick="setLogMode('circuit')">Circuit</button>
     </div>
 
-    <!-- Inputs are rendered from the selected exercise's metric (see schema.js) -->
-    <div id="modal-metrics"></div>
+    <!-- Single set: one exercise, one set -->
+    <div id="modal-single">
+      <div class="form-row">
+        <label for="modal-exercise">Exercise</label>
+        <select id="modal-exercise" onchange="onLogExerciseChange(this.value)"></select>
+      </div>
+
+      <!-- Inputs are rendered from the selected exercise's metric (see schema.js) -->
+      <div id="modal-metrics"></div>
+    </div>
+
+    <!-- Circuit: 2+ exercises logged together for N rounds -->
+    <div id="modal-circuit" class="hidden">
+      <div class="form-row">
+        <label for="circuit-add">Add exercise</label>
+        <select id="circuit-add" onchange="addCircuitItem(this.value); this.value=''"></select>
+      </div>
+      <div id="circuit-list"></div>
+      <div class="metric-block">
+        <div class="metric-head"><span class="metric-label">Rounds</span></div>
+        <div class="stepper">
+          <button type="button" class="step-btn" onclick="stepRounds(-1)" aria-label="Fewer rounds">−1</button>
+          <input type="number" id="circuit-rounds" class="step-value" inputmode="numeric" min="1" max="20" value="3" />
+          <button type="button" class="step-btn" onclick="stepRounds(1)" aria-label="More rounds">+1</button>
+        </div>
+      </div>
+    </div>
 
     <div class="form-row">
       <label for="modal-notes">Notes</label>
@@ -64,7 +89,7 @@
 
     <div style="display:flex;gap:10px;margin-top:20px">
       <button class="btn btn-full" onclick="closeLogModal()">Cancel</button>
-      <button class="btn btn-primary btn-full" onclick="submitLog()">Save set</button>
+      <button class="btn btn-primary btn-full" onclick="submitLog()">Save</button>
     </div>
   </div>
 </div>

@@ -1,10 +1,11 @@
-import { openDB, seedIfEmpty, getExercises, getSets, addSet, deleteSet, getAllPRs, getPref, setPref, getEquipment, getLastSetForExercise, updateExerciseMetric } from './db.js';
+import { openDB, seedIfEmpty, getExercises, getSets, addSet, addSets, deleteSet, deleteSetsByGroup, getAllPRs, getPref, setPref, getEquipment, getLastSetForExercise, updateExerciseMetric } from './db.js';
 import { calcPlates, targetFromPct, displayWeight, buildSessionPlan, toKg, toLbs, weightStep } from './calc.js';
 import { burstFromEl } from './confetti.js';
 import { exportBackup, importBackup } from './backup.js';
 import { VERSION, BUILD_DATE } from './version.js';
 import { localDateStr } from './dates.js';
 import { METRIC_LABELS, SET_TYPES } from './schema.js';
+import { newGroupId, groupByCircuit } from './circuits.js';
 
 // ── State ──────────────────────────────────────────────────
 let state = {
@@ -132,20 +133,13 @@ async function renderLog(el) {
   }
 
   const exMap = Object.fromEntries(state.exercises.map(e => [e.id, e.name]));
+  const blocks = groupByCircuit(todaySets);
 
-  const setsHtml = todaySets.length === 0
+  const setsHtml = blocks.length === 0
     ? `<div class="empty"><div class="icon">🏋️</div><p>No sets logged today yet.</p></div>`
-    : todaySets.map(s => `
-        <div class="log-item" data-id="${s.id}">
-          <div>
-            <div class="log-name">${exMap[s.exerciseId] || '?'}</div>
-            <div class="log-detail">${setDetail(s)} · ${fmtDate(s.date)}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <div class="log-weight">${setPrimary(s)}</div>
-            <button class="btn btn-ghost" style="padding:4px;font-size:18px;color:var(--text-3)" onclick="deleteSetItem(${s.id})">✕</button>
-          </div>
-        </div>`).join('');
+    : blocks.map(block =>
+        block.groupId ? circuitBlockHtml(block, exMap) : setRowHtml(block.items[0], exMap)
+      ).join('');
 
   el.innerHTML = `
     <div class="stat-grid">
@@ -161,9 +155,54 @@ async function renderLog(el) {
   document.getElementById('fab').onclick = openLogModal;
 }
 
+// One standalone set.
+function setRowHtml(s, exMap) {
+  return `
+    <div class="log-item" data-id="${s.id}">
+      <div>
+        <div class="log-name">${exMap[s.exerciseId] || '?'}</div>
+        <div class="log-detail">${setDetail(s)} · ${fmtDate(s.date)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="log-weight">${setPrimary(s)}</div>
+        <button class="btn btn-ghost" style="padding:4px;font-size:18px;color:var(--text-3)" onclick="deleteSetItem(${s.id})">✕</button>
+      </div>
+    </div>`;
+}
+
+// A circuit (superset): the sets sharing one groupId, shown round by round.
+function circuitBlockHtml(block, exMap) {
+  const exerciseCount = new Set(block.items.map(s => s.exerciseId)).size;
+  const rows = block.items.map(s => `
+    <div class="circuit-row">
+      <span class="circuit-round">R${s.round ?? 1}</span>
+      <span class="circuit-name">${exMap[s.exerciseId] || '?'}</span>
+      <span class="circuit-detail">${setDetail(s)}</span>
+      <span class="circuit-weight">${setPrimary(s)}</span>
+    </div>`).join('');
+
+  return `
+    <div class="circuit-block">
+      <div class="circuit-head">
+        <div>
+          <span class="circuit-title">Circuit</span>
+          <span class="circuit-meta">${block.rounds} round${block.rounds !== 1 ? 's' : ''} · ${exerciseCount} exercises</span>
+        </div>
+        <button class="btn btn-ghost circuit-delete" onclick="deleteCircuit('${block.groupId}')">Delete</button>
+      </div>
+      ${rows}
+    </div>`;
+}
+
 window.deleteSetItem = async function(id) {
   if (!confirm('Delete this set?')) return;
   await deleteSet(id);
+  renderTab('log');
+};
+
+window.deleteCircuit = async function(groupId) {
+  if (!confirm('Delete this whole circuit?')) return;
+  await deleteSetsByGroup(groupId);
   renderTab('log');
 };
 
@@ -172,36 +211,44 @@ window.deleteSetItem = async function(id) {
 // (see schema.js). Every field is a big stepper + free numeric input +
 // quick picks, so it stays usable with gloves on. Weight keeps two
 // stepper sizes because plate jumping is the common gym case.
+//
+// Fields are addressed by `scope` so a circuit can show the same inputs
+// more than once: the single-set form uses "f-", a circuit item uses
+// "f-c<index>-".
 
-function fieldValue(key) {
-  const el = document.getElementById('f-' + key);
+function scopeEl(scope, key) {
+  return document.getElementById(scope + key);
+}
+
+function fieldValue(scope, key) {
+  const el = scopeEl(scope, key);
   if (!el) return null;
   const v = parseFloat(el.value);
   return Number.isFinite(v) ? v : null;
 }
 
-window.stepField = function(key, sign, step) {
-  const el = document.getElementById('f-' + key);
+window.stepField = function(scope, key, sign, step) {
+  const el = scopeEl(scope, key);
   if (!el) return;
-  const cur = fieldValue(key) ?? 0;
+  const cur = fieldValue(scope, key) ?? 0;
   el.value = Math.max(0, Math.round((cur + sign * step) * 100) / 100);
   refreshModalCalc();
 };
 
-window.setField = function(key, val) {
-  const el = document.getElementById('f-' + key);
+window.setField = function(scope, key, val) {
+  const el = scopeEl(scope, key);
   if (!el) return;
   el.value = val;
   refreshModalCalc();
 };
 
-function chipsHtml(key, values) {
+function chipsHtml(scope, key, values) {
   return values.map(v =>
-    `<button type="button" class="chip-btn" data-field="${key}" data-val="${v}" onclick="setField('${key}', ${v})">${v}</button>`
+    `<button type="button" class="chip-btn" data-scope="${scope}" data-field="${key}" data-val="${v}" onclick="setField('${scope}', '${key}', ${v})">${v}</button>`
   ).join('');
 }
 
-function weightFieldHtml() {
+function weightFieldHtml(scope) {
   const fine = weightStep(state.unit, true);
   const coarse = weightStep(state.unit, false);
   return `
@@ -211,30 +258,30 @@ function weightFieldHtml() {
         <span class="metric-unit">${state.unit}</span>
       </div>
       <div class="stepper">
-        <button type="button" class="step-btn" onclick="stepField('weight', -1, ${coarse})" aria-label="Decrease weight">−${coarse}</button>
-        <button type="button" class="step-btn" onclick="stepField('weight', -1, ${fine})" aria-label="Decrease weight slightly">−${fine}</button>
-        <input type="number" id="f-weight" class="step-value" inputmode="decimal" min="0" placeholder="0" oninput="refreshModalCalc()" />
-        <button type="button" class="step-btn" onclick="stepField('weight', 1, ${fine})" aria-label="Increase weight slightly">+${fine}</button>
-        <button type="button" class="step-btn" onclick="stepField('weight', 1, ${coarse})" aria-label="Increase weight">+${coarse}</button>
+        <button type="button" class="step-btn" onclick="stepField('${scope}', 'weight', -1, ${coarse})" aria-label="Decrease weight">−${coarse}</button>
+        <button type="button" class="step-btn" onclick="stepField('${scope}', 'weight', -1, ${fine})" aria-label="Decrease weight slightly">−${fine}</button>
+        <input type="number" id="${scope}weight" class="step-value" inputmode="decimal" min="0" placeholder="0" oninput="refreshModalCalc()" />
+        <button type="button" class="step-btn" onclick="stepField('${scope}', 'weight', 1, ${fine})" aria-label="Increase weight slightly">+${fine}</button>
+        <button type="button" class="step-btn" onclick="stepField('${scope}', 'weight', 1, ${coarse})" aria-label="Increase weight">+${coarse}</button>
       </div>
-      <div class="plate-chips" id="modal-plates"></div>
+      <div class="plate-chips" data-plates="${scope}"></div>
     </div>`;
 }
 
-function repsFieldHtml() {
+function repsFieldHtml(scope) {
   return `
     <div class="metric-block">
       <div class="metric-head"><span class="metric-label">Reps</span></div>
       <div class="stepper">
-        <button type="button" class="step-btn" onclick="stepField('reps', -1, 1)" aria-label="Decrease reps">−1</button>
-        <input type="number" id="f-reps" class="step-value" inputmode="numeric" min="1" max="99" placeholder="5" oninput="refreshModalCalc()" />
-        <button type="button" class="step-btn" onclick="stepField('reps', 1, 1)" aria-label="Increase reps">+1</button>
+        <button type="button" class="step-btn" onclick="stepField('${scope}', 'reps', -1, 1)" aria-label="Decrease reps">−1</button>
+        <input type="number" id="${scope}reps" class="step-value" inputmode="numeric" min="1" max="99" placeholder="5" oninput="refreshModalCalc()" />
+        <button type="button" class="step-btn" onclick="stepField('${scope}', 'reps', 1, 1)" aria-label="Increase reps">+1</button>
       </div>
-      <div class="chips-row">${chipsHtml('reps', [1, 3, 5, 8, 10, 12, 15, 20])}</div>
+      <div class="chips-row">${chipsHtml(scope, 'reps', [1, 3, 5, 8, 10, 12, 15, 20])}</div>
     </div>`;
 }
 
-function singleFieldHtml({ key, label, unit, step, chips }) {
+function singleFieldHtml(scope, { key, label, unit, step, chips }) {
   return `
     <div class="metric-block">
       <div class="metric-head">
@@ -242,71 +289,68 @@ function singleFieldHtml({ key, label, unit, step, chips }) {
         <span class="metric-unit">${unit}</span>
       </div>
       <div class="stepper">
-        <button type="button" class="step-btn" onclick="stepField('${key}', -1, ${step})" aria-label="Decrease ${label}">−${step}</button>
-        <input type="number" id="f-${key}" class="step-value" inputmode="numeric" min="0" oninput="refreshModalCalc()" />
-        <button type="button" class="step-btn" onclick="stepField('${key}', 1, ${step})" aria-label="Increase ${label}">+${step}</button>
+        <button type="button" class="step-btn" onclick="stepField('${scope}', '${key}', -1, ${step})" aria-label="Decrease ${label}">−${step}</button>
+        <input type="number" id="${scope}${key}" class="step-value" inputmode="numeric" min="0" oninput="refreshModalCalc()" />
+        <button type="button" class="step-btn" onclick="stepField('${scope}', '${key}', 1, ${step})" aria-label="Increase ${label}">+${step}</button>
       </div>
-      <div class="chips-row">${chipsHtml(key, chips)}</div>
-      <div class="chip-note" id="hint-${key}"></div>
+      <div class="chips-row">${chipsHtml(scope, key, chips)}</div>
+      <div class="chip-note" data-hint="${scope}" data-hint-key="${key}"></div>
     </div>`;
 }
 
 // Add a metric by adding a case here plus SET_TYPES/METRIC_LABELS in schema.js.
-function metricFieldsHtml(metric) {
+function metricFieldsHtml(scope, metric) {
   switch (metric) {
     case 'timed':
-      return singleFieldHtml({ key: 'duration', label: 'Duration', unit: 'seconds', step: 15, chips: [30, 45, 60, 90, 120, 300] });
+      return singleFieldHtml(scope, { key: 'duration', label: 'Duration', unit: 'seconds', step: 15, chips: [30, 45, 60, 90, 120, 300] });
     case 'distance':
-      return singleFieldHtml({ key: 'distance', label: 'Distance', unit: 'metres', step: 100, chips: [400, 1000, 2000, 5000, 10000] });
+      return singleFieldHtml(scope, { key: 'distance', label: 'Distance', unit: 'metres', step: 100, chips: [400, 1000, 2000, 5000, 10000] });
     case 'output':
-      return singleFieldHtml({ key: 'output', label: 'Output', unit: 'count', step: 1, chips: [5, 10, 20, 30, 50] });
+      return singleFieldHtml(scope, { key: 'output', label: 'Output', unit: 'count', step: 1, chips: [5, 10, 20, 30, 50] });
     default:
-      return weightFieldHtml() + repsFieldHtml();
+      return weightFieldHtml(scope) + repsFieldHtml(scope);
   }
 }
 
-// Live feedback: chip highlights, plate readout for weight, and a
+// Live feedback: chip highlights, per-scope plate readout, and a
 // human-readable hint for duration/distance.
 window.refreshModalCalc = function() {
-  document.querySelectorAll('#modal-metrics .chip-btn').forEach(b => {
-    const v = fieldValue(b.dataset.field);
+  document.querySelectorAll('#log-modal .chip-btn').forEach(b => {
+    const v = fieldValue(b.dataset.scope, b.dataset.field);
     b.classList.toggle('active', v !== null && Number(b.dataset.val) === v);
   });
 
-  const duration = fieldValue('duration');
-  const durationHint = document.getElementById('hint-duration');
-  if (durationHint) durationHint.textContent = duration ? fmtDuration(duration) : '';
+  document.querySelectorAll('#log-modal .chip-note[data-hint]').forEach(el => {
+    const v = fieldValue(el.dataset.hint, el.dataset.hintKey);
+    if (v === null) { el.textContent = ''; return; }
+    el.textContent = el.dataset.hintKey === 'duration' ? fmtDuration(v) : fmtDistance(v);
+  });
 
-  const distance = fieldValue('distance');
-  const distanceHint = document.getElementById('hint-distance');
-  if (distanceHint) distanceHint.textContent = distance ? fmtDistance(distance) : '';
+  document.querySelectorAll('#log-modal [data-plates]').forEach(platesEl => {
+    const typed = fieldValue(platesEl.dataset.plates, 'weight');
+    if (typed === null) { platesEl.innerHTML = ''; return; }
 
-  const platesEl = document.getElementById('modal-plates');
-  if (!platesEl) return;
+    const lbs = state.unit === 'kg' ? toLbs(typed) : typed;
+    const { barWeight, plates } = state.equipment;
 
-  const typed = fieldValue('weight');
-  if (typed === null) { platesEl.innerHTML = ''; return; }
+    if (lbs <= barWeight) {
+      platesEl.innerHTML = '<span class="chip-note">Bar only</span>';
+      return;
+    }
 
-  const lbs = state.unit === 'kg' ? toLbs(typed) : typed;
-  const { barWeight, plates } = state.equipment;
+    const { actual, plates: used } = calcPlates(lbs, barWeight, plates);
+    const chips = used.length
+      ? used.map(p => `<span class="chip"><b>${p.count}×</b> ${p.weight} lb</span>`).join('')
+      : '<span class="chip">bar only</span>';
 
-  if (lbs <= barWeight) {
-    platesEl.innerHTML = '<span class="chip-note">Bar only</span>';
-    return;
-  }
-
-  const { actual, plates: used } = calcPlates(lbs, barWeight, plates);
-  const chips = used.length
-    ? used.map(p => `<span class="chip"><b>${p.count}×</b> ${p.weight} lb</span>`).join('')
-    : '<span class="chip">bar only</span>';
-
-  // Compare in the unit the user typed, otherwise a kg -> lbs -> kg
-  // round-trip (0.1 lb) reads as "not loadable".
-  const actualShown = state.unit === 'kg' ? toKg(actual) : actual;
-  const note = Math.abs(actualShown - typed) > 0.05
-    ? `<div class="chip-note">Closest loadable: ${dw(actual)}</div>`
-    : '';
-  platesEl.innerHTML = chips + note;
+    // Compare in the unit the user typed, otherwise a kg -> lbs -> kg
+    // round-trip (0.1 lb) reads as "not loadable".
+    const actualShown = state.unit === 'kg' ? toKg(actual) : actual;
+    const note = Math.abs(actualShown - typed) > 0.05
+      ? `<div class="chip-note">Closest loadable: ${dw(actual)}</div>`
+      : '';
+    platesEl.innerHTML = chips + note;
+  });
 };
 
 function metricForExercise(exerciseId) {
@@ -319,16 +363,20 @@ function strengthExercises() {
   return state.exercises.filter(e => e.metric === 'strength');
 }
 
-// Prefill "same as last time" for the selected exercise, in its own metric.
-async function prefillFromLastSet(exerciseId, metric) {
-  document.getElementById('modal-notes').value = '';
+function clearScopeFields(scope) {
   for (const key of ['weight', 'reps', 'duration', 'distance', 'output']) {
-    const el = document.getElementById('f-' + key);
+    const el = scopeEl(scope, key);
     if (el) el.value = '';
   }
+}
+
+// Prefill "same as last time" for one exercise, in its own metric.
+async function prefillFromLastSet(exerciseId, metric, scope = 'f-', clearNotes = true) {
+  if (clearNotes) document.getElementById('modal-notes').value = '';
+  clearScopeFields(scope);
 
   const set = (key, value) => {
-    const el = document.getElementById('f-' + key);
+    const el = scopeEl(scope, key);
     if (el && value != null) el.value = value;
   };
 
@@ -347,12 +395,122 @@ async function prefillFromLastSet(exerciseId, metric) {
   refreshModalCalc();
 }
 
+// ── Single-set mode ────────────────────────────────────────
 function renderModalForExercise(exerciseId) {
   const metric = metricForExercise(exerciseId);
   document.getElementById('modal-title').textContent = `Log · ${METRIC_LABELS[metric]}`;
-  document.getElementById('modal-metrics').innerHTML = metricFieldsHtml(metric);
-  prefillFromLastSet(exerciseId, metric);
+  document.getElementById('modal-metrics').innerHTML = metricFieldsHtml('f-', metric);
+  prefillFromLastSet(exerciseId, metric, 'f-');
 }
+
+// ── Circuit mode ───────────────────────────────────────────
+// Build a superset/circuit: pick 2+ exercises, set a round count, and the
+// whole thing is logged in one go. Every set gets the same `groupId` and a
+// 1-based `round`, which is what the Log tab groups on (see circuits.js).
+let logMode = 'single';
+let circuitItems = [];   // [{ exerciseId, metric }]
+
+const circuitScope = index => `f-c${index}-`;
+
+// Keep whatever has been typed when the list re-renders, keyed by exercise
+// so removing an item doesn't shift values onto the wrong one.
+function snapshotCircuitValues() {
+  const snap = {};
+  circuitItems.forEach((item, i) => {
+    const scope = circuitScope(i);
+    snap[item.exerciseId] = {};
+    for (const key of ['weight', 'reps', 'duration', 'distance', 'output']) {
+      const el = scopeEl(scope, key);
+      if (el) snap[item.exerciseId][key] = el.value;
+    }
+  });
+  return snap;
+}
+
+function restoreCircuitValues(snap) {
+  circuitItems.forEach((item, i) => {
+    const values = snap[item.exerciseId];
+    if (!values) return;
+    const scope = circuitScope(i);
+    for (const [key, value] of Object.entries(values)) {
+      const el = scopeEl(scope, key);
+      if (el && value !== '') el.value = value;
+    }
+  });
+}
+
+// `snap` must be captured before circuitItems changes — otherwise values
+// shift onto the wrong exercise when an item is removed.
+function renderCircuit(snap = snapshotCircuitValues()) {
+  const listEl = document.getElementById('circuit-list');
+  const addSel = document.getElementById('circuit-add');
+  const chosen = new Set(circuitItems.map(i => i.exerciseId));
+
+  addSel.innerHTML = '<option value="">+ Add exercise…</option>' +
+    state.exercises
+      .filter(e => !chosen.has(e.id))
+      .map(e => `<option value="${e.id}">${e.name}</option>`)
+      .join('');
+
+  listEl.innerHTML = circuitItems.length === 0
+    ? '<div class="chip-note">Add at least two exercises to make a circuit.</div>'
+    : circuitItems.map((item, i) => {
+        const exercise = state.exercises.find(e => e.id === item.exerciseId);
+        return `
+          <div class="circuit-item">
+            <div class="circuit-item-head">
+              <span class="circuit-item-name">${i + 1}. ${exercise ? exercise.name : '?'}</span>
+              <button type="button" class="btn btn-ghost circuit-remove" onclick="removeCircuitItem(${i})" aria-label="Remove exercise">✕</button>
+            </div>
+            ${metricFieldsHtml(circuitScope(i), item.metric)}
+          </div>`;
+      }).join('');
+
+  restoreCircuitValues(snap);
+  refreshModalCalc();
+}
+
+window.addCircuitItem = function(value) {
+  const id = parseInt(value, 10);
+  if (!id || circuitItems.some(i => i.exerciseId === id)) return;
+  const snap = snapshotCircuitValues();
+  circuitItems.push({ exerciseId: id, metric: metricForExercise(id) });
+  renderCircuit(snap);
+  prefillFromLastSet(id, metricForExercise(id), circuitScope(circuitItems.length - 1), false);
+};
+
+window.removeCircuitItem = function(index) {
+  const snap = snapshotCircuitValues();
+  circuitItems.splice(index, 1);
+  renderCircuit(snap);
+};
+
+window.stepRounds = function(sign) {
+  const el = document.getElementById('circuit-rounds');
+  const cur = parseInt(el.value, 10);
+  el.value = Math.max(1, Math.min(20, (Number.isFinite(cur) ? cur : 1) + sign));
+};
+
+window.setLogMode = function(mode) {
+  logMode = mode;
+  document.getElementById('modal-single').classList.toggle('hidden', mode !== 'single');
+  document.getElementById('modal-circuit').classList.toggle('hidden', mode !== 'circuit');
+  document.querySelectorAll('#log-modal .mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === mode));
+
+  if (mode === 'circuit') {
+    const snap = snapshotCircuitValues();
+    if (circuitItems.length === 0) {
+      const exId = parseInt(document.getElementById('modal-exercise').value, 10);
+      if (exId) circuitItems.push({ exerciseId: exId, metric: metricForExercise(exId) });
+    }
+    document.getElementById('modal-title').textContent = 'Log · Circuit';
+    renderCircuit(snap);
+  } else {
+    const exId = parseInt(document.getElementById('modal-exercise').value, 10);
+    document.getElementById('modal-title').textContent = `Log · ${METRIC_LABELS[metricForExercise(exId)]}`;
+  }
+};
 
 function openLogModal() {
   const sel = document.getElementById('modal-exercise');
@@ -361,6 +519,7 @@ function openLogModal() {
 
   document.getElementById('log-modal').classList.add('open');
   renderModalForExercise(parseInt(sel.value, 10));
+  setLogMode('single');
 }
 
 window.closeLogModal = function() {
@@ -371,27 +530,39 @@ window.onLogExerciseChange = function(val) {
   renderModalForExercise(parseInt(val, 10));
 };
 
+// Build one set payload from a scoped form. Returns { error } when a
+// required value is missing, so callers can report it before writing.
+function buildSetPayload(exerciseId, metric, scope, base) {
+  const payload = { exerciseId, type: metric, ...base };
+  const name = state.exercises.find(e => e.id === exerciseId)?.name || 'every exercise';
+
+  if (metric === 'strength') {
+    const weight = fieldValue(scope, 'weight');
+    if (weight === null) return { error: `Enter a weight for ${name}.` };
+    payload.weight = Math.round((state.unit === 'kg' ? toLbs(weight) : weight) * 10) / 10;
+    const reps = fieldValue(scope, 'reps');
+    payload.reps = reps === null ? undefined : Math.round(reps);
+  } else if (metric === 'timed') {
+    payload.duration = fieldValue(scope, 'duration') ?? undefined;
+  } else if (metric === 'distance') {
+    payload.distance = fieldValue(scope, 'distance') ?? undefined;
+  } else {
+    payload.output = fieldValue(scope, 'output') ?? undefined;
+  }
+
+  return { payload };
+}
+
 window.submitLog = async function() {
+  if (logMode === 'circuit') { await submitCircuit(); return; }
+
   const exId = parseInt(document.getElementById('modal-exercise').value, 10);
   if (!exId) { alert('Choose an exercise.'); return; }
 
   const metric = metricForExercise(exId);
   const notes = document.getElementById('modal-notes').value.trim();
-  const payload = { exerciseId: exId, date: todayStr(), notes, type: metric };
-
-  if (metric === 'strength') {
-    const weight = fieldValue('weight');
-    if (weight === null) { alert('Enter a weight.'); return; }
-    payload.weight = Math.round((state.unit === 'kg' ? toLbs(weight) : weight) * 10) / 10;
-    const reps = fieldValue('reps');
-    payload.reps = reps === null ? undefined : Math.round(reps);
-  } else if (metric === 'timed') {
-    payload.duration = fieldValue('duration') ?? undefined;
-  } else if (metric === 'distance') {
-    payload.distance = fieldValue('distance') ?? undefined;
-  } else {
-    payload.output = fieldValue('output') ?? undefined;
-  }
+  const { payload, error } = buildSetPayload(exId, metric, 'f-', { date: todayStr(), notes });
+  if (error) { alert(error); return; }
 
   try {
     await addSet(payload);   // addSet validates the shape for the set's metric
@@ -404,6 +575,39 @@ window.submitLog = async function() {
   closeLogModal();
   renderTab('log');
 };
+
+// One circuit = rounds × exercises sets sharing a groupId.
+async function submitCircuit() {
+  if (circuitItems.length < 2) { alert('A circuit needs at least two exercises.'); return; }
+
+  const rounds = parseInt(document.getElementById('circuit-rounds').value, 10);
+  if (!Number.isInteger(rounds) || rounds < 1) { alert('Enter a number of rounds.'); return; }
+
+  const notes = document.getElementById('modal-notes').value.trim();
+  const groupId = newGroupId();
+  const date = todayStr();
+
+  const built = [];
+  for (let round = 1; round <= rounds; round++) {
+    circuitItems.forEach((item, i) => {
+      built.push(buildSetPayload(item.exerciseId, item.metric, circuitScope(i), { date, notes, groupId, round }));
+    });
+  }
+
+  const bad = built.find(r => r.error);
+  if (bad) { alert(bad.error); return; }
+
+  try {
+    await addSets(built.map(r => r.payload));
+  } catch (err) {
+    alert(err.message);
+    return;
+  }
+
+  state.lastExerciseId = circuitItems[0].exerciseId;
+  closeLogModal();
+  renderTab('log');
+}
 
 // ── PRs Tab ────────────────────────────────────────────────
 async function renderPRs(el) {

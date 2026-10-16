@@ -289,6 +289,110 @@ select:focus, input:focus { border-color: var(--accent); }
   letter-spacing: 0.02em;
 }
 
+/* ── Circuits (supersets) ────────────────────────────── */
+.circuit-block {
+  padding: 12px;
+  margin: 10px 0;
+  border: 1px solid var(--border-md);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.circuit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.circuit-title {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.circuit-meta { font-size: 11px; color: var(--text-3); margin-left: 8px; }
+.circuit-delete { font-size: 12px; padding: 4px 8px; color: var(--text-3); }
+
+.circuit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.circuit-round {
+  flex-shrink: 0;
+  min-width: 24px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+}
+
+.circuit-name { flex: 1; color: var(--text); font-weight: 500; }
+.circuit-detail { color: var(--text-2); font-size: 12px; }
+
+.circuit-weight {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* Circuit builder (Log modal) */
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 18px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mode-btn.active { background: var(--accent); color: #000; }
+
+.circuit-item {
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.circuit-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.circuit-item-name { font-size: 14px; font-weight: 500; color: var(--text); }
+.circuit-remove { padding: 2px 6px; font-size: 16px; color: var(--text-3); }
+
 /* ── PR badge ────────────────────────────────────────── */
 .pr-badge {
   display: inline-block;

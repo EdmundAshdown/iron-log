@@ -134,7 +134,35 @@ export async function addSet(payload) {
   return put('sets', record);
 }
 
+// Write several sets in one transaction. Circuit logging produces
+// rounds × exercises records at once, and they should land together or
+// not at all.
+export async function addSets(payloads) {
+  const records = payloads.map(normalizeSet);
+  for (const record of records) {
+    const { ok, error } = validateSet(record);
+    if (!ok) throw new Error(error);
+  }
+
+  return new Promise((resolve, reject) => {
+    const store = tx('sets', 'readwrite');
+    for (const record of records) store.put(record);
+    const t = store.transaction;
+    t.oncomplete = () => resolve(records.length);
+    t.onerror = e => reject(e.target.error);
+    t.onabort = e => reject(e.target.error);
+  });
+}
+
 export const deleteSet = id => del('sets', id);
+
+// Delete every set in a circuit (all sets sharing a groupId).
+export async function deleteSetsByGroup(groupId) {
+  const sets = await getSets();
+  const ids = sets.filter(s => s.groupId === groupId).map(s => s.id);
+  for (const id of ids) await deleteSet(id);
+  return ids.length;
+}
 
 // The most recently logged set for an exercise, or null. Pass a `type`
 // to restrict the search (e.g. 'strength' when prefilling weight/reps).

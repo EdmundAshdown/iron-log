@@ -4,7 +4,7 @@ A mobile-first PWA gym workout tracker. Tracks PRs, plans full workout sessions 
 
 ## Features
 
-- **Log** — Log sets (exercise, weight, reps). PRs are auto-detected and badged.
+- **Log** — Log sets (exercise, weight, reps). PRs are auto-detected and badged. Supersets and circuits log as a group with round numbers.
 - **PRs** — View 1RM, 3RM, 5RM per exercise with configurable date window and all-time fallback.
 - **Planner** — Build full workout sessions with multiple movements. Per-set % or flat lbs input, rep counts, live plate transition instructions.
 - **Settings** — Units (lbs/kg), bar weight, plate inventory, exercise management, JSON backup/restore.
@@ -23,6 +23,7 @@ iron-log/
     app.js          # Main app logic
     db.js           # IndexedDB data layer
     schema.js       # Set schema, validation, backup migration
+    circuits.js     # Circuit grouping (supersets)
     dates.js        # Local calendar-day helpers
     calc.js         # Plate calculator + session plan
     confetti.js     # Set completion celebration
@@ -67,13 +68,24 @@ fields are meaningful (see `js/schema.js`):
 | `distance` | `distance` (metres)    | 5 km             |
 | `output`   | `output` (count)       | 30 calories      |
 
-Every set also stores `exerciseId`, `date` (`YYYY-MM-DD`) and `notes`.
-Records written before v2 have no `type` and are treated as `strength`;
-IndexedDB is migrated in place on upgrade (`DB_VERSION` in `js/db.js`).
+Every set also stores `exerciseId`, `date` (`YYYY-MM-DD`), `notes`, and —
+for circuit members — `groupId` and `round`. Records written before v2 have
+no `type` and are treated as `strength`; IndexedDB is migrated in place on
+upgrade (`DB_VERSION` in `js/db.js`).
 
 Each exercise declares which metric it logs (Settings → Exercises), and the
 Log modal renders the matching inputs. Exercises predating v3 default to
 `strength`, and the Planner and PRs tabs only offer weight/reps lifts.
+
+### Circuits (supersets)
+
+The Log modal has a **Circuit** mode: pick two or more exercises, set a round
+count, and every round × exercise combination is written in one transaction.
+There is no separate circuit entity — the sets themselves carry a shared
+`groupId` and a 1-based `round`, and sets without a `groupId` are standalone
+(see `js/circuits.js`). The Log tab groups sets by `groupId` and renders them
+round by round with a block-level delete. Because the group is just fields on
+the sets, backups, restores and older app versions all keep working.
 
 ### Backup compatibility
 
@@ -83,8 +95,8 @@ version are rejected rather than silently misread.
 
 ## Testing
 
-Schema and migration logic is covered by Node's built-in test runner
-(no dependencies):
+Schema, migration, date and circuit-grouping logic is covered by Node's
+built-in test runner (no dependencies):
 
 ```bash
 npm test

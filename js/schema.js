@@ -36,9 +36,17 @@ export function normalizeExercise(exercise = {}) {
 export const BACKUP_VERSION = 3;
 
 // Fill in defaults so every consumer can assume a uniform shape.
+// `groupId`/`round` mark membership of a circuit (see circuits.js);
+// standalone sets have groupId null.
 export function normalizeSet(set = {}) {
   const type = SET_TYPES.includes(set.type) ? set.type : 'strength';
-  return { ...set, type, notes: set.notes ?? '' };
+  return {
+    ...set,
+    type,
+    notes: set.notes ?? '',
+    groupId: set.groupId ?? null,
+    round: Number.isInteger(set.round) && set.round > 0 ? set.round : null,
+  };
 }
 
 // Returns { ok: true } or { ok: false, error } for user-facing display.

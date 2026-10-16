@@ -128,6 +128,29 @@ Node's built-in test runner (no dependencies):
 npm test
 ```
 
+### Verifying changes in a browser
+
+The service worker is cache-first, so **serve each round on a fresh port**:
+
+```bash
+python3 -m http.server 8913   # then 8914, 8915, …
+```
+
+Reusing a port means the old service worker serves the previous assets and
+you end up debugging code that isn't running. A new port is a new origin, so
+it gets a clean cache and a clean IndexedDB.
+
+Assert on the DOM and on stored records rather than eyeballing a screenshot —
+it is quicker and it actually checks the data:
+
+- Drive the UI through the `window.*` handlers (`openLogModal` is reached by
+  clicking `#fab`; `setLogMode`, `addCircuitItem`, `submitLog`, `startRest` and
+  friends are global).
+- Read IndexedDB straight from the page to confirm what was written:
+  `indexedDB.open('iron-log')` → `transaction('sets').objectStore('sets').getAll()`.
+- Check `document.querySelectorAll('.circuit-block')` etc. for what rendered.
+- Screenshots need a visible desktop window, so don't rely on them.
+
 ## Releases
 
 The service worker is cache-first and precaches an explicit asset list in

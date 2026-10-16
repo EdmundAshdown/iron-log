@@ -71,9 +71,13 @@ Every set also stores `exerciseId`, `date` (`YYYY-MM-DD`) and `notes`.
 Records written before v2 have no `type` and are treated as `strength`;
 IndexedDB is migrated in place on upgrade (`DB_VERSION` in `js/db.js`).
 
+Each exercise declares which metric it logs (Settings → Exercises), and the
+Log modal renders the matching inputs. Exercises predating v3 default to
+`strength`, and the Planner and PRs tabs only offer weight/reps lifts.
+
 ### Backup compatibility
 
-`js/backup.js` writes `version: 2` (`BACKUP_VERSION`). On import, older
+`js/backup.js` writes `version: 3` (`BACKUP_VERSION`). On import, older
 files are migrated up to the current version; files from a newer app
 version are rejected rather than silently misread.
 

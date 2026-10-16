@@ -17,8 +17,23 @@
 
 export const SET_TYPES = ['strength', 'timed', 'distance', 'output'];
 
+// Human labels for the exercise metric configurator.
+export const METRIC_LABELS = {
+  strength: 'Weight × Reps',
+  timed: 'Time',
+  distance: 'Distance',
+  output: 'Output',
+};
+
+// An exercise declares which metric it logs, so the Log modal can show the
+// right inputs. Exercises without a metric are weight/reps lifts.
+export function normalizeExercise(exercise = {}) {
+  const metric = SET_TYPES.includes(exercise.metric) ? exercise.metric : 'strength';
+  return { ...exercise, metric };
+}
+
 // Bump when the *backup file* shape changes. See migrateBackup().
-export const BACKUP_VERSION = 2;
+export const BACKUP_VERSION = 3;
 
 // Fill in defaults so every consumer can assume a uniform shape.
 export function normalizeSet(set = {}) {
@@ -68,5 +83,8 @@ export function migrateBackup(data) {
   // are weight/reps sets, so normalizeSet() defaults them to 'strength'.
   const sets = data.sets.map(normalizeSet);
 
-  return { ...data, version: BACKUP_VERSION, sets };
+  // v2 → v3: exercises gained a `metric`. Defaults to 'strength'.
+  const exercises = data.exercises.map(normalizeExercise);
+
+  return { ...data, version: BACKUP_VERSION, exercises, sets };
 }

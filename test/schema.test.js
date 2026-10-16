@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SET_TYPES,
+  METRIC_LABELS,
   BACKUP_VERSION,
   normalizeSet,
+  normalizeExercise,
   validateSet,
   migrateBackup,
 } from '../js/schema.js';
@@ -83,4 +85,34 @@ test('migrateBackup rejects malformed data', () => {
 
 test('SET_TYPES covers the four planned metric families', () => {
   assert.deepEqual(SET_TYPES, ['strength', 'timed', 'distance', 'output']);
+});
+
+test('every metric has a human label', () => {
+  for (const type of SET_TYPES) {
+    assert.equal(typeof METRIC_LABELS[type], 'string');
+    assert.ok(METRIC_LABELS[type].length > 0);
+  }
+});
+
+test('normalizeExercise defaults legacy exercises to strength', () => {
+  assert.equal(normalizeExercise({ id: 1, name: 'Bench Press' }).metric, 'strength');
+  assert.equal(normalizeExercise({ id: 2, name: 'Rowing' }).name, 'Rowing');
+});
+
+test('normalizeExercise keeps a known metric and rejects unknown ones', () => {
+  assert.equal(normalizeExercise({ name: 'Plank', metric: 'timed' }).metric, 'timed');
+  assert.equal(normalizeExercise({ name: 'Plank', metric: 'bogus' }).metric, 'strength');
+});
+
+test('migrateBackup stamps a metric onto exercises (v2 → v3)', () => {
+  const v2 = {
+    version: 2,
+    exercises: [{ id: 1, name: 'Bench Press' }, { id: 2, name: 'Rowing', metric: 'distance' }],
+    sets: [{ id: 1, exerciseId: 1, date: '2026-08-01', weight: 135, reps: 5, type: 'strength' }],
+  };
+  const out = migrateBackup(v2);
+  assert.equal(out.version, BACKUP_VERSION);
+  assert.equal(out.exercises[0].metric, 'strength');
+  assert.equal(out.exercises[1].metric, 'distance');
+  assert.equal(out.sets[0].type, 'strength');
 });

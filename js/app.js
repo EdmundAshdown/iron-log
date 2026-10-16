@@ -1,9 +1,10 @@
-import { openDB, seedIfEmpty, getExercises, getSets, addSet, deleteSet, getAllPRs, getPref, setPref, getEquipment, getLastSetForExercise } from './db.js';
+import { openDB, seedIfEmpty, getExercises, getSets, addSet, deleteSet, getAllPRs, getPref, setPref, getEquipment, getLastSetForExercise, updateExerciseMetric } from './db.js';
 import { calcPlates, targetFromPct, displayWeight, buildSessionPlan, toKg, toLbs, weightStep } from './calc.js';
 import { burstFromEl } from './confetti.js';
 import { exportBackup, importBackup } from './backup.js';
 import { VERSION, BUILD_DATE } from './version.js';
 import { localDateStr } from './dates.js';
+import { METRIC_LABELS, SET_TYPES } from './schema.js';
 
 // ── State ──────────────────────────────────────────────────
 let state = {
@@ -39,9 +40,10 @@ async function boot() {
   state.unit = await getPref('unit', 'lbs');
   state.prWindow = await getPref('prWindow', '365');
 
-  // Assign first exercise to first planner block
-  if (state.exercises.length > 0) {
-    state.plannerWorkout[0].exerciseId = state.exercises[0].id;
+  // Assign first lift to first planner block
+  const lifts = strengthExercises();
+  if (lifts.length > 0) {
+    state.plannerWorkout[0].exerciseId = lifts[0].id;
     state.plannerWorkout[0].checked = state.plannerWorkout[0].sets.map(() => false);
   }
 
@@ -166,50 +168,124 @@ window.deleteSetItem = async function(id) {
 };
 
 // ── Log modal ──────────────────────────────────────────────
-// Any weight, any rep count. Steppers are sized to the current unit so
-// a "fine" step moves the smallest plate and a "coarse" step moves
-// roughly a plate pair — usable with gloves on.
-const REP_CHIPS = [1, 3, 5, 8, 10, 12, 15, 20];
+// The modal renders inputs for the metric the selected exercise logs
+// (see schema.js). Every field is a big stepper + free numeric input +
+// quick picks, so it stays usable with gloves on. Weight keeps two
+// stepper sizes because plate jumping is the common gym case.
 
-function modalWeight() {
-  const v = parseFloat(document.getElementById('modal-weight').value);
-  return Number.isFinite(v) ? v : 0;
+function fieldValue(key) {
+  const el = document.getElementById('f-' + key);
+  if (!el) return null;
+  const v = parseFloat(el.value);
+  return Number.isFinite(v) ? v : null;
 }
 
-function modalReps() {
-  const v = parseInt(document.getElementById('modal-reps').value, 10);
-  return Number.isFinite(v) ? v : 0;
+window.stepField = function(key, sign, step) {
+  const el = document.getElementById('f-' + key);
+  if (!el) return;
+  const cur = fieldValue(key) ?? 0;
+  el.value = Math.max(0, Math.round((cur + sign * step) * 100) / 100);
+  refreshModalCalc();
+};
+
+window.setField = function(key, val) {
+  const el = document.getElementById('f-' + key);
+  if (!el) return;
+  el.value = val;
+  refreshModalCalc();
+};
+
+function chipsHtml(key, values) {
+  return values.map(v =>
+    `<button type="button" class="chip-btn" data-field="${key}" data-val="${v}" onclick="setField('${key}', ${v})">${v}</button>`
+  ).join('');
 }
 
-window.stepWeight = function(sign, kind) {
-  const next = modalWeight() + sign * weightStep(state.unit, kind === 'fine');
-  document.getElementById('modal-weight').value = Math.max(0, Math.round(next * 10) / 10);
-  refreshModalCalc();
-};
+function weightFieldHtml() {
+  const fine = weightStep(state.unit, true);
+  const coarse = weightStep(state.unit, false);
+  return `
+    <div class="metric-block">
+      <div class="metric-head">
+        <span class="metric-label">Weight</span>
+        <span class="metric-unit">${state.unit}</span>
+      </div>
+      <div class="stepper">
+        <button type="button" class="step-btn" onclick="stepField('weight', -1, ${coarse})" aria-label="Decrease weight">−${coarse}</button>
+        <button type="button" class="step-btn" onclick="stepField('weight', -1, ${fine})" aria-label="Decrease weight slightly">−${fine}</button>
+        <input type="number" id="f-weight" class="step-value" inputmode="decimal" min="0" placeholder="0" oninput="refreshModalCalc()" />
+        <button type="button" class="step-btn" onclick="stepField('weight', 1, ${fine})" aria-label="Increase weight slightly">+${fine}</button>
+        <button type="button" class="step-btn" onclick="stepField('weight', 1, ${coarse})" aria-label="Increase weight">+${coarse}</button>
+      </div>
+      <div class="plate-chips" id="modal-plates"></div>
+    </div>`;
+}
 
-window.stepReps = function(sign) {
-  const next = Math.max(1, Math.min(99, modalReps() + sign));
-  document.getElementById('modal-reps').value = next;
-  refreshModalCalc();
-};
+function repsFieldHtml() {
+  return `
+    <div class="metric-block">
+      <div class="metric-head"><span class="metric-label">Reps</span></div>
+      <div class="stepper">
+        <button type="button" class="step-btn" onclick="stepField('reps', -1, 1)" aria-label="Decrease reps">−1</button>
+        <input type="number" id="f-reps" class="step-value" inputmode="numeric" min="1" max="99" placeholder="5" oninput="refreshModalCalc()" />
+        <button type="button" class="step-btn" onclick="stepField('reps', 1, 1)" aria-label="Increase reps">+1</button>
+      </div>
+      <div class="chips-row">${chipsHtml('reps', [1, 3, 5, 8, 10, 12, 15, 20])}</div>
+    </div>`;
+}
 
-window.setModalReps = function(n) {
-  document.getElementById('modal-reps').value = n;
-  refreshModalCalc();
-};
+function singleFieldHtml({ key, label, unit, step, chips }) {
+  return `
+    <div class="metric-block">
+      <div class="metric-head">
+        <span class="metric-label">${label}</span>
+        <span class="metric-unit">${unit}</span>
+      </div>
+      <div class="stepper">
+        <button type="button" class="step-btn" onclick="stepField('${key}', -1, ${step})" aria-label="Decrease ${label}">−${step}</button>
+        <input type="number" id="f-${key}" class="step-value" inputmode="numeric" min="0" oninput="refreshModalCalc()" />
+        <button type="button" class="step-btn" onclick="stepField('${key}', 1, ${step})" aria-label="Increase ${label}">+${step}</button>
+      </div>
+      <div class="chips-row">${chipsHtml(key, chips)}</div>
+      <div class="chip-note" id="hint-${key}"></div>
+    </div>`;
+}
 
-// Live plate breakdown for the typed weight, plus reps chip highlight.
+// Add a metric by adding a case here plus SET_TYPES/METRIC_LABELS in schema.js.
+function metricFieldsHtml(metric) {
+  switch (metric) {
+    case 'timed':
+      return singleFieldHtml({ key: 'duration', label: 'Duration', unit: 'seconds', step: 15, chips: [30, 45, 60, 90, 120, 300] });
+    case 'distance':
+      return singleFieldHtml({ key: 'distance', label: 'Distance', unit: 'metres', step: 100, chips: [400, 1000, 2000, 5000, 10000] });
+    case 'output':
+      return singleFieldHtml({ key: 'output', label: 'Output', unit: 'count', step: 1, chips: [5, 10, 20, 30, 50] });
+    default:
+      return weightFieldHtml() + repsFieldHtml();
+  }
+}
+
+// Live feedback: chip highlights, plate readout for weight, and a
+// human-readable hint for duration/distance.
 window.refreshModalCalc = function() {
+  document.querySelectorAll('#modal-metrics .chip-btn').forEach(b => {
+    const v = fieldValue(b.dataset.field);
+    b.classList.toggle('active', v !== null && Number(b.dataset.val) === v);
+  });
+
+  const duration = fieldValue('duration');
+  const durationHint = document.getElementById('hint-duration');
+  if (durationHint) durationHint.textContent = duration ? fmtDuration(duration) : '';
+
+  const distance = fieldValue('distance');
+  const distanceHint = document.getElementById('hint-distance');
+  if (distanceHint) distanceHint.textContent = distance ? fmtDistance(distance) : '';
+
   const platesEl = document.getElementById('modal-plates');
   if (!platesEl) return;
 
-  const reps = modalReps();
-  document.querySelectorAll('#reps-chips .chip-btn').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.reps, 10) === reps);
-  });
-
-  const typed = modalWeight();
-  if (!typed) { platesEl.innerHTML = ''; return; }
+  const typed = fieldValue('weight');
+  if (typed === null) { platesEl.innerHTML = ''; return; }
 
   const lbs = state.unit === 'kg' ? toLbs(typed) : typed;
   const { barWeight, plates } = state.equipment;
@@ -233,22 +309,49 @@ window.refreshModalCalc = function() {
   platesEl.innerHTML = chips + note;
 };
 
-// Prefill "same as last time" for the selected exercise.
-async function prefillFromLastSet(exerciseId) {
-  const weightEl = document.getElementById('modal-weight');
-  const repsEl = document.getElementById('modal-reps');
-  document.getElementById('modal-notes').value = '';
+function metricForExercise(exerciseId) {
+  const exercise = state.exercises.find(e => e.id === exerciseId);
+  return exercise?.metric || 'strength';
+}
 
-  const last = exerciseId ? await getLastSetForExercise(exerciseId, 'strength') : null;
+// The Planner is built on percentage-of-1RM, so it only offers lifts.
+function strengthExercises() {
+  return state.exercises.filter(e => e.metric === 'strength');
+}
+
+// Prefill "same as last time" for the selected exercise, in its own metric.
+async function prefillFromLastSet(exerciseId, metric) {
+  document.getElementById('modal-notes').value = '';
+  for (const key of ['weight', 'reps', 'duration', 'distance', 'output']) {
+    const el = document.getElementById('f-' + key);
+    if (el) el.value = '';
+  }
+
+  const set = (key, value) => {
+    const el = document.getElementById('f-' + key);
+    if (el && value != null) el.value = value;
+  };
+
+  const last = exerciseId ? await getLastSetForExercise(exerciseId, metric) : null;
 
   if (last) {
-    weightEl.value = state.unit === 'kg' ? toKg(last.weight) : last.weight;
-    repsEl.value = last.reps;
-  } else {
-    weightEl.value = '';
-    repsEl.value = 5;
+    if (metric === 'strength') {
+      set('weight', state.unit === 'kg' ? toKg(last.weight) : last.weight);
+      set('reps', last.reps);
+    } else if (metric === 'timed') set('duration', last.duration);
+    else if (metric === 'distance') set('distance', last.distance);
+    else set('output', last.output);
+  } else if (metric === 'strength') {
+    set('reps', 5);
   }
   refreshModalCalc();
+}
+
+function renderModalForExercise(exerciseId) {
+  const metric = metricForExercise(exerciseId);
+  document.getElementById('modal-title').textContent = `Log · ${METRIC_LABELS[metric]}`;
+  document.getElementById('modal-metrics').innerHTML = metricFieldsHtml(metric);
+  prefillFromLastSet(exerciseId, metric);
 }
 
 function openLogModal() {
@@ -256,21 +359,8 @@ function openLogModal() {
   sel.innerHTML = state.exercises.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
   if (state.lastExerciseId) sel.value = String(state.lastExerciseId);
 
-  // Stepper labels follow the unit (lbs: 2.5 / 10, kg: 1 / 5)
-  const fine = weightStep(state.unit, true);
-  const coarse = weightStep(state.unit, false);
-  document.getElementById('modal-unit-lbl').textContent = state.unit;
-  document.getElementById('step-w-down-fine').textContent = `−${fine}`;
-  document.getElementById('step-w-up-fine').textContent = `+${fine}`;
-  document.getElementById('step-w-down-coarse').textContent = `−${coarse}`;
-  document.getElementById('step-w-up-coarse').textContent = `+${coarse}`;
-
-  document.getElementById('reps-chips').innerHTML = REP_CHIPS
-    .map(n => `<button type="button" class="chip-btn" data-reps="${n}" onclick="setModalReps(${n})">${n}</button>`)
-    .join('');
-
   document.getElementById('log-modal').classList.add('open');
-  prefillFromLastSet(parseInt(sel.value, 10));
+  renderModalForExercise(parseInt(sel.value, 10));
 }
 
 window.closeLogModal = function() {
@@ -278,25 +368,35 @@ window.closeLogModal = function() {
 };
 
 window.onLogExerciseChange = function(val) {
-  prefillFromLastSet(parseInt(val, 10));
+  renderModalForExercise(parseInt(val, 10));
 };
 
 window.submitLog = async function() {
   const exId = parseInt(document.getElementById('modal-exercise').value, 10);
-  const weightStr = document.getElementById('modal-weight').value.trim();
-  const reps = modalReps();
-  const notes = document.getElementById('modal-notes').value.trim();
-
   if (!exId) { alert('Choose an exercise.'); return; }
-  if (weightStr === '') { alert('Enter a weight.'); return; }
 
-  const weightRaw = parseFloat(weightStr);
-  const weightLbs = Math.round((state.unit === 'kg' ? toLbs(weightRaw) : weightRaw) * 10) / 10;
+  const metric = metricForExercise(exId);
+  const notes = document.getElementById('modal-notes').value.trim();
+  const payload = { exerciseId: exId, date: todayStr(), notes, type: metric };
+
+  if (metric === 'strength') {
+    const weight = fieldValue('weight');
+    if (weight === null) { alert('Enter a weight.'); return; }
+    payload.weight = Math.round((state.unit === 'kg' ? toLbs(weight) : weight) * 10) / 10;
+    const reps = fieldValue('reps');
+    payload.reps = reps === null ? undefined : Math.round(reps);
+  } else if (metric === 'timed') {
+    payload.duration = fieldValue('duration') ?? undefined;
+  } else if (metric === 'distance') {
+    payload.distance = fieldValue('distance') ?? undefined;
+  } else {
+    payload.output = fieldValue('output') ?? undefined;
+  }
 
   try {
-    await addSet({ exerciseId: exId, date: todayStr(), weight: weightLbs, reps, notes });
+    await addSet(payload);   // addSet validates the shape for the set's metric
   } catch (err) {
-    alert(err.message);   // addSet validates the set shape
+    alert(err.message);
     return;
   }
 
@@ -309,7 +409,8 @@ window.submitLog = async function() {
 async function renderPRs(el) {
   const since = sinceDate();
   const windowLabel = { '90': 'Last 3 months', '180': 'Last 6 months', '365': 'Last year', 'all': 'All time' }[state.prWindow] || 'Last year';
-  const rows = await Promise.all(state.exercises.map(async ex => ({ ex, prs: await getAllPRs(ex.id, since) })));
+  // Only weight/reps lifts can hold weight PRs.
+  const rows = await Promise.all(strengthExercises().map(async ex => ({ ex, prs: await getAllPRs(ex.id, since) })));
   const hasAny = rows.some(r => r.prs[1] || r.prs[3] || r.prs[5]);
 
   el.innerHTML = `
@@ -352,7 +453,7 @@ async function renderPlanner(el) {
 
   // Build HTML for each movement block
   const blocksHtml = await Promise.all(state.plannerWorkout.map(async (block, bi) => {
-    const exOptions = state.exercises.map(e =>
+    const exOptions = strengthExercises().map(e =>
       `<option value="${e.id}" ${e.id === block.exerciseId ? 'selected' : ''}>${e.name}</option>`
     ).join('');
 
@@ -602,7 +703,7 @@ window.removeSet = function(bi) {
 
 window.addBlock = function() {
   state.plannerWorkout.push({
-    exerciseId: state.exercises.length > 0 ? state.exercises[0].id : null,
+    exerciseId: strengthExercises()[0]?.id ?? null,
     rmType: 1,
     sets: [
       { mode: 'pct', value: 50, reps: 5 },
@@ -682,7 +783,13 @@ async function renderSettings(el) {
     <div class="card">
       ${state.exercises.map(e => `
         <div class="setting-row">
-          <div class="setting-label">${e.name}</div>
+          <div>
+            <div class="setting-label">${e.name}</div>
+            <div class="setting-sub">What it logs</div>
+          </div>
+          <select style="width:130px" onchange="setExerciseMetric(${e.id}, this.value)">
+            ${SET_TYPES.map(m => `<option value="${m}" ${e.metric === m ? 'selected' : ''}>${METRIC_LABELS[m]}</option>`).join('')}
+          </select>
           <button class="btn btn-ghost" style="color:var(--text-3);font-size:18px" onclick="deleteEx(${e.id})">✕</button>
         </div>`).join('')}
       <button class="btn btn-ghost" style="padding:4px 0;margin-top:6px" onclick="openAddExercise()">+ Add exercise</button>
@@ -756,6 +863,12 @@ window.addPlateType = async function() {
   await saveEquipment(state.equipment);
   renderPlateEditor();
 };
+window.setExerciseMetric = async function(id, metric) {
+  await updateExerciseMetric(id, metric);
+  state.exercises = await getExercises();
+  renderTab('settings');
+};
+
 window.deleteEx = async function(id) {
   if (!confirm('Delete this exercise? Your logged sets will remain.')) return;
   const { deleteExercise } = await import('./db.js');

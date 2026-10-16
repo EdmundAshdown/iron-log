@@ -1,6 +1,6 @@
 import { openDB, getExercises, getSets, getEquipment } from './db.js';
 import { VERSION } from './version.js';
-import { BACKUP_VERSION, migrateBackup } from './schema.js';
+import { BACKUP_VERSION, migrateBackup, normalizeExercise } from './schema.js';
 import { localDateStr } from './dates.js';
 
 // ── Export ─────────────────────────────────────────────────
@@ -108,7 +108,7 @@ async function applyBackup(data, mode) {
         idMap[ex.id] = match.id;
       } else {
         // Insert as new, get auto-incremented ID
-        const newId = await addRecord(db, 'exercises', { name: ex.name });
+        const newId = await addRecord(db, 'exercises', normalizeExercise({ name: ex.name, metric: ex.metric }));
         idMap[ex.id] = newId;
         existingNames.add(ex.name.toLowerCase());
       }

@@ -1,7 +1,7 @@
-import { normalizeSet, validateSet } from './schema.js';
+import { normalizeSet, normalizeExercise, validateSet } from './schema.js';
 
 const DB_NAME = 'iron-log';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let db;
 
@@ -34,20 +34,30 @@ export function openDB() {
         d.createObjectStore('preferences', { keyPath: 'key' });
       }
 
-      // v1 → v2: sets gained a `type` discriminator (see schema.js).
-      // Stamp existing records in place so the read path can treat every
-      // set uniformly without a per-read migration.
-      if (oldVersion >= 1 && oldVersion < 2 && d.objectStoreNames.contains('sets')) {
-        const store = e.target.transaction.objectStore('sets');
+      // In-place record migrations. Each stamp is idempotent, so the read
+      // path can assume the current shape instead of migrating per read.
+      const migrateStore = (storeName, normalize, changed) => {
+        if (!d.objectStoreNames.contains(storeName)) return;
+        const store = e.target.transaction.objectStore(storeName);
         store.openCursor().onsuccess = ev => {
           const cursor = ev.target.result;
           if (!cursor) return;
-          const next = normalizeSet(cursor.value);
-          if (cursor.value.type !== next.type || cursor.value.notes !== next.notes) {
-            cursor.update(next);
-          }
+          const next = normalize(cursor.value);
+          if (changed(cursor.value, next)) cursor.update(next);
           cursor.continue();
         };
+      };
+
+      // v1 → v2: sets gained a `type` discriminator (see schema.js).
+      if (oldVersion >= 1 && oldVersion < 2) {
+        migrateStore('sets', normalizeSet, (before, after) =>
+          before.type !== after.type || before.notes !== after.notes);
+      }
+
+      // v2 → v3: exercises gained a `metric`.
+      if (oldVersion >= 1 && oldVersion < 3) {
+        migrateStore('exercises', normalizeExercise, (before, after) =>
+          before.metric !== after.metric);
       }
     };
 
@@ -93,9 +103,20 @@ function del(store, key) {
 }
 
 // ── Exercises ──────────────────────────────────────────────
-export const getExercises = () => all('exercises');
-export const addExercise = name => put('exercises', { name });
+export async function getExercises() {
+  return (await all('exercises')).map(normalizeExercise);
+}
+
+export const addExercise = (name, metric = 'strength') =>
+  put('exercises', normalizeExercise({ name, metric }));
+
 export const deleteExercise = id => del('exercises', id);
+
+export async function updateExerciseMetric(id, metric) {
+  const exercise = await get('exercises', id);
+  if (!exercise) return null;
+  return put('exercises', normalizeExercise({ ...exercise, metric }));
+}
 
 // ── Sets ───────────────────────────────────────────────────
 //

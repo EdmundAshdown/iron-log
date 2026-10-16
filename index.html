@@ -47,39 +47,15 @@
 <div class="modal-overlay" id="log-modal" role="dialog" aria-modal="true" aria-label="Log a set">
   <div class="modal-sheet">
     <div class="modal-handle"></div>
-    <div class="modal-title">Log a set</div>
+    <div class="modal-title" id="modal-title">Log a set</div>
 
     <div class="form-row">
       <label for="modal-exercise">Exercise</label>
       <select id="modal-exercise" onchange="onLogExerciseChange(this.value)"></select>
     </div>
 
-    <!-- Weight: any value, steppers sized to the current unit -->
-    <div class="metric-block">
-      <div class="metric-head">
-        <span class="metric-label">Weight</span>
-        <span class="metric-unit" id="modal-unit-lbl">lbs</span>
-      </div>
-      <div class="stepper">
-        <button type="button" class="step-btn" id="step-w-down-coarse" onclick="stepWeight(-1,'coarse')" aria-label="Decrease weight">−10</button>
-        <button type="button" class="step-btn" id="step-w-down-fine" onclick="stepWeight(-1,'fine')" aria-label="Decrease weight slightly">−2.5</button>
-        <input type="number" id="modal-weight" class="step-value" inputmode="decimal" min="0" step="2.5" placeholder="0" oninput="refreshModalCalc()" />
-        <button type="button" class="step-btn" id="step-w-up-fine" onclick="stepWeight(1,'fine')" aria-label="Increase weight slightly">+2.5</button>
-        <button type="button" class="step-btn" id="step-w-up-coarse" onclick="stepWeight(1,'coarse')" aria-label="Increase weight">+10</button>
-      </div>
-      <div class="plate-chips" id="modal-plates"></div>
-    </div>
-
-    <!-- Reps: any count, plus quick picks -->
-    <div class="metric-block">
-      <div class="metric-head"><span class="metric-label">Reps</span></div>
-      <div class="stepper">
-        <button type="button" class="step-btn" onclick="stepReps(-1)" aria-label="Decrease reps">−1</button>
-        <input type="number" id="modal-reps" class="step-value" inputmode="numeric" min="1" max="99" placeholder="5" oninput="refreshModalCalc()" />
-        <button type="button" class="step-btn" onclick="stepReps(1)" aria-label="Increase reps">+1</button>
-      </div>
-      <div class="chips-row" id="reps-chips"></div>
-    </div>
+    <!-- Inputs are rendered from the selected exercise's metric (see schema.js) -->
+    <div id="modal-metrics"></div>
 
     <div class="form-row">
       <label for="modal-notes">Notes</label>

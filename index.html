@@ -51,29 +51,36 @@
 
     <div class="form-row">
       <label for="modal-exercise">Exercise</label>
-      <select id="modal-exercise"></select>
+      <select id="modal-exercise" onchange="onLogExerciseChange(this.value)"></select>
     </div>
-    <div class="form-row">
-      <label for="modal-weight">Weight</label>
-      <input type="number" id="modal-weight" placeholder="135" min="0" step="2.5" inputmode="decimal" />
+
+    <!-- Weight: any value, steppers sized to the current unit -->
+    <div class="metric-block">
+      <div class="metric-head">
+        <span class="metric-label">Weight</span>
+        <span class="metric-unit" id="modal-unit-lbl">lbs</span>
+      </div>
+      <div class="stepper">
+        <button type="button" class="step-btn" id="step-w-down-coarse" onclick="stepWeight(-1,'coarse')" aria-label="Decrease weight">−10</button>
+        <button type="button" class="step-btn" id="step-w-down-fine" onclick="stepWeight(-1,'fine')" aria-label="Decrease weight slightly">−2.5</button>
+        <input type="number" id="modal-weight" class="step-value" inputmode="decimal" min="0" step="2.5" placeholder="0" oninput="refreshModalCalc()" />
+        <button type="button" class="step-btn" id="step-w-up-fine" onclick="stepWeight(1,'fine')" aria-label="Increase weight slightly">+2.5</button>
+        <button type="button" class="step-btn" id="step-w-up-coarse" onclick="stepWeight(1,'coarse')" aria-label="Increase weight">+10</button>
+      </div>
+      <div class="plate-chips" id="modal-plates"></div>
     </div>
-    <div class="form-row">
-      <label for="modal-reps">Reps</label>
-      <select id="modal-reps">
-        <option value="1">1 rep (1RM)</option>
-        <option value="2">2 reps</option>
-        <option value="3">3 reps (3RM)</option>
-        <option value="4">4 reps</option>
-        <option value="5" selected>5 reps (5RM)</option>
-        <option value="6">6 reps</option>
-        <option value="7">7 reps</option>
-        <option value="8">8 reps</option>
-        <option value="10">10 reps</option>
-        <option value="12">12 reps</option>
-        <option value="15">15 reps</option>
-        <option value="20">20 reps</option>
-      </select>
+
+    <!-- Reps: any count, plus quick picks -->
+    <div class="metric-block">
+      <div class="metric-head"><span class="metric-label">Reps</span></div>
+      <div class="stepper">
+        <button type="button" class="step-btn" onclick="stepReps(-1)" aria-label="Decrease reps">−1</button>
+        <input type="number" id="modal-reps" class="step-value" inputmode="numeric" min="1" max="99" placeholder="5" oninput="refreshModalCalc()" />
+        <button type="button" class="step-btn" onclick="stepReps(1)" aria-label="Increase reps">+1</button>
+      </div>
+      <div class="chips-row" id="reps-chips"></div>
     </div>
+
     <div class="form-row">
       <label for="modal-notes">Notes</label>
       <input type="text" id="modal-notes" placeholder="Optional" />

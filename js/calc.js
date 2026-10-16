@@ -36,6 +36,14 @@ export function displayWeight(lbs, unit) {
   return lbs + ' lbs';
 }
 
+// Increment for the Log modal's weight steppers. A "coarse" step moves
+// roughly one plate pair; a "fine" step moves the smallest plate.
+// Defaults to the coarse step.
+export function weightStep(unit, fine = false) {
+  if (unit === 'kg') return fine ? 1 : 5;
+  return fine ? 2.5 : 10;
+}
+
 // ── Session plate plan ─────────────────────────────────────
 //
 // Takes an ordered list of target weights (one per set) and returns

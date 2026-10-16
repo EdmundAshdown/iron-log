@@ -1,13 +1,15 @@
-import { openDB, seedIfEmpty, getExercises, getSets, addSet, deleteSet, getAllPRs, getPref, setPref, getEquipment } from './db.js';
-import { calcPlates, targetFromPct, displayWeight, buildSessionPlan } from './calc.js';
+import { openDB, seedIfEmpty, getExercises, getSets, addSet, deleteSet, getAllPRs, getPref, setPref, getEquipment, getLastSetForExercise } from './db.js';
+import { calcPlates, targetFromPct, displayWeight, buildSessionPlan, toKg, toLbs, weightStep } from './calc.js';
 import { burstFromEl } from './confetti.js';
 import { exportBackup, importBackup } from './backup.js';
 import { VERSION, BUILD_DATE } from './version.js';
+import { localDateStr } from './dates.js';
 
 // ── State ──────────────────────────────────────────────────
 let state = {
   tab: 'log',
   unit: 'lbs',
+  lastExerciseId: null,
   exercises: [],
   equipment: { barWeight: 45, plates: [] },
   prWindow: '365',
@@ -78,13 +80,40 @@ function sinceDate() {
   if (!state.prWindow || state.prWindow === 'all') return null;
   const d = new Date();
   d.setDate(d.getDate() - parseInt(state.prWindow));
-  return d.toISOString().split('T')[0];
+  return localDateStr(d);
 }
 
-function todayStr() { return new Date().toISOString().split('T')[0]; }
+function todayStr() { return localDateStr(); }
 
 function fmtDate(isoStr) {
   return new Date(isoStr + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// ── Set display helpers ────────────────────────────────────
+// A set's shape depends on its `type` (see js/schema.js), so rendering
+// reads through these instead of assuming weight/reps.
+function fmtDuration(sec) {
+  const total = Math.round(sec);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
+}
+
+function fmtDistance(metres) {
+  return metres >= 1000 ? `${Math.round(metres / 100) / 10} km` : `${Math.round(metres)} m`;
+}
+
+function setDetail(s) {
+  switch (s.type) {
+    case 'timed':    return fmtDuration(s.duration);
+    case 'distance': return fmtDistance(s.distance);
+    case 'output':   return `${s.output} output`;
+    default:         return `${s.reps} rep${s.reps !== 1 ? 's' : ''}`;
+  }
+}
+
+function setPrimary(s) {
+  return s.type === 'strength' ? dw(s.weight) : '';
 }
 
 // ── Log Tab ────────────────────────────────────────────────
@@ -95,8 +124,9 @@ async function renderLog(el) {
 
   let prCount = 0;
   for (const s of todaySets) {
+    if (s.type !== 'strength') continue;   // only weight/reps sets set PRs
     const prs = await getAllPRs(s.exerciseId, sinceDate());
-    if (prs[s.reps] === s.weight) prCount++;
+    if (s.weight != null && prs[s.reps] === s.weight) prCount++;
   }
 
   const exMap = Object.fromEntries(state.exercises.map(e => [e.id, e.name]));
@@ -107,10 +137,10 @@ async function renderLog(el) {
         <div class="log-item" data-id="${s.id}">
           <div>
             <div class="log-name">${exMap[s.exerciseId] || '?'}</div>
-            <div class="log-detail">${s.reps} rep${s.reps !== 1 ? 's' : ''} · ${fmtDate(s.date)}</div>
+            <div class="log-detail">${setDetail(s)} · ${fmtDate(s.date)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:10px">
-            <div class="log-weight">${dw(s.weight)}</div>
+            <div class="log-weight">${setPrimary(s)}</div>
             <button class="btn btn-ghost" style="padding:4px;font-size:18px;color:var(--text-3)" onclick="deleteSetItem(${s.id})">✕</button>
           </div>
         </div>`).join('');
@@ -135,24 +165,142 @@ window.deleteSetItem = async function(id) {
   renderTab('log');
 };
 
+// ── Log modal ──────────────────────────────────────────────
+// Any weight, any rep count. Steppers are sized to the current unit so
+// a "fine" step moves the smallest plate and a "coarse" step moves
+// roughly a plate pair — usable with gloves on.
+const REP_CHIPS = [1, 3, 5, 8, 10, 12, 15, 20];
+
+function modalWeight() {
+  const v = parseFloat(document.getElementById('modal-weight').value);
+  return Number.isFinite(v) ? v : 0;
+}
+
+function modalReps() {
+  const v = parseInt(document.getElementById('modal-reps').value, 10);
+  return Number.isFinite(v) ? v : 0;
+}
+
+window.stepWeight = function(sign, kind) {
+  const next = modalWeight() + sign * weightStep(state.unit, kind === 'fine');
+  document.getElementById('modal-weight').value = Math.max(0, Math.round(next * 10) / 10);
+  refreshModalCalc();
+};
+
+window.stepReps = function(sign) {
+  const next = Math.max(1, Math.min(99, modalReps() + sign));
+  document.getElementById('modal-reps').value = next;
+  refreshModalCalc();
+};
+
+window.setModalReps = function(n) {
+  document.getElementById('modal-reps').value = n;
+  refreshModalCalc();
+};
+
+// Live plate breakdown for the typed weight, plus reps chip highlight.
+window.refreshModalCalc = function() {
+  const platesEl = document.getElementById('modal-plates');
+  if (!platesEl) return;
+
+  const reps = modalReps();
+  document.querySelectorAll('#reps-chips .chip-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.reps, 10) === reps);
+  });
+
+  const typed = modalWeight();
+  if (!typed) { platesEl.innerHTML = ''; return; }
+
+  const lbs = state.unit === 'kg' ? toLbs(typed) : typed;
+  const { barWeight, plates } = state.equipment;
+
+  if (lbs <= barWeight) {
+    platesEl.innerHTML = '<span class="chip-note">Bar only</span>';
+    return;
+  }
+
+  const { actual, plates: used } = calcPlates(lbs, barWeight, plates);
+  const chips = used.length
+    ? used.map(p => `<span class="chip"><b>${p.count}×</b> ${p.weight} lb</span>`).join('')
+    : '<span class="chip">bar only</span>';
+
+  // Compare in the unit the user typed, otherwise a kg -> lbs -> kg
+  // round-trip (0.1 lb) reads as "not loadable".
+  const actualShown = state.unit === 'kg' ? toKg(actual) : actual;
+  const note = Math.abs(actualShown - typed) > 0.05
+    ? `<div class="chip-note">Closest loadable: ${dw(actual)}</div>`
+    : '';
+  platesEl.innerHTML = chips + note;
+};
+
+// Prefill "same as last time" for the selected exercise.
+async function prefillFromLastSet(exerciseId) {
+  const weightEl = document.getElementById('modal-weight');
+  const repsEl = document.getElementById('modal-reps');
+  document.getElementById('modal-notes').value = '';
+
+  const last = exerciseId ? await getLastSetForExercise(exerciseId, 'strength') : null;
+
+  if (last) {
+    weightEl.value = state.unit === 'kg' ? toKg(last.weight) : last.weight;
+    repsEl.value = last.reps;
+  } else {
+    weightEl.value = '';
+    repsEl.value = 5;
+  }
+  refreshModalCalc();
+}
+
 function openLogModal() {
-  document.getElementById('modal-exercise').innerHTML =
-    state.exercises.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+  const sel = document.getElementById('modal-exercise');
+  sel.innerHTML = state.exercises.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+  if (state.lastExerciseId) sel.value = String(state.lastExerciseId);
+
+  // Stepper labels follow the unit (lbs: 2.5 / 10, kg: 1 / 5)
+  const fine = weightStep(state.unit, true);
+  const coarse = weightStep(state.unit, false);
+  document.getElementById('modal-unit-lbl').textContent = state.unit;
+  document.getElementById('step-w-down-fine').textContent = `−${fine}`;
+  document.getElementById('step-w-up-fine').textContent = `+${fine}`;
+  document.getElementById('step-w-down-coarse').textContent = `−${coarse}`;
+  document.getElementById('step-w-up-coarse').textContent = `+${coarse}`;
+
+  document.getElementById('reps-chips').innerHTML = REP_CHIPS
+    .map(n => `<button type="button" class="chip-btn" data-reps="${n}" onclick="setModalReps(${n})">${n}</button>`)
+    .join('');
+
   document.getElementById('log-modal').classList.add('open');
+  prefillFromLastSet(parseInt(sel.value, 10));
 }
 
 window.closeLogModal = function() {
   document.getElementById('log-modal').classList.remove('open');
 };
 
+window.onLogExerciseChange = function(val) {
+  prefillFromLastSet(parseInt(val, 10));
+};
+
 window.submitLog = async function() {
-  const exId = parseInt(document.getElementById('modal-exercise').value);
-  const reps = parseInt(document.getElementById('modal-reps').value);
-  const weightRaw = parseFloat(document.getElementById('modal-weight').value);
+  const exId = parseInt(document.getElementById('modal-exercise').value, 10);
+  const weightStr = document.getElementById('modal-weight').value.trim();
+  const reps = modalReps();
   const notes = document.getElementById('modal-notes').value.trim();
-  if (!exId || isNaN(reps) || isNaN(weightRaw)) return;
-  const weightLbs = state.unit === 'kg' ? weightRaw * 2.20462 : weightRaw;
-  await addSet({ exerciseId: exId, date: todayStr(), weight: Math.round(weightLbs * 10) / 10, reps, notes });
+
+  if (!exId) { alert('Choose an exercise.'); return; }
+  if (weightStr === '') { alert('Enter a weight.'); return; }
+
+  const weightRaw = parseFloat(weightStr);
+  const weightLbs = Math.round((state.unit === 'kg' ? toLbs(weightRaw) : weightRaw) * 10) / 10;
+
+  try {
+    await addSet({ exerciseId: exId, date: todayStr(), weight: weightLbs, reps, notes });
+  } catch (err) {
+    alert(err.message);   // addSet validates the set shape
+    return;
+  }
+
+  state.lastExerciseId = exId;
   closeLogModal();
   renderTab('log');
 };

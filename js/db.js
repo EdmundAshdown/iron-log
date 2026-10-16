@@ -1,5 +1,7 @@
+import { normalizeSet, validateSet } from './schema.js';
+
 const DB_NAME = 'iron-log';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let db;
 
@@ -10,6 +12,7 @@ export function openDB() {
 
     req.onupgradeneeded = e => {
       const d = e.target.result;
+      const oldVersion = e.oldVersion || 0;
 
       if (!d.objectStoreNames.contains('exercises')) {
         const ex = d.createObjectStore('exercises', { keyPath: 'id', autoIncrement: true });
@@ -29,6 +32,22 @@ export function openDB() {
 
       if (!d.objectStoreNames.contains('preferences')) {
         d.createObjectStore('preferences', { keyPath: 'key' });
+      }
+
+      // v1 → v2: sets gained a `type` discriminator (see schema.js).
+      // Stamp existing records in place so the read path can treat every
+      // set uniformly without a per-read migration.
+      if (oldVersion >= 1 && oldVersion < 2 && d.objectStoreNames.contains('sets')) {
+        const store = e.target.transaction.objectStore('sets');
+        store.openCursor().onsuccess = ev => {
+          const cursor = ev.target.result;
+          if (!cursor) return;
+          const next = normalizeSet(cursor.value);
+          if (cursor.value.type !== next.type || cursor.value.notes !== next.notes) {
+            cursor.update(next);
+          }
+          cursor.continue();
+        };
       }
     };
 
@@ -79,29 +98,52 @@ export const addExercise = name => put('exercises', { name });
 export const deleteExercise = id => del('exercises', id);
 
 // ── Sets ───────────────────────────────────────────────────
-export const getSets = () => all('sets');
+//
+// All reads run through normalizeSet() so callers always get a uniform
+// shape, even if the underlying record predates the v2 migration.
+export async function getSets() {
+  return (await all('sets')).map(normalizeSet);
+}
 
-export function addSet({ exerciseId, date, weight, reps, notes = '' }) {
-  // weight always stored in lbs
-  return put('sets', { exerciseId, date, weight, reps, notes });
+export async function addSet(payload) {
+  // weight is always stored in lbs
+  const record = normalizeSet(payload);
+  const { ok, error } = validateSet(record);
+  if (!ok) throw new Error(error);
+  return put('sets', record);
 }
 
 export const deleteSet = id => del('sets', id);
 
+// The most recently logged set for an exercise, or null. Pass a `type`
+// to restrict the search (e.g. 'strength' when prefilling weight/reps).
+export async function getLastSetForExercise(exerciseId, type = null) {
+  let sets = await getSetsForExercise(exerciseId);
+  if (type) sets = sets.filter(s => s.type === type);
+  if (sets.length === 0) return null;
+  return sets.reduce((latest, s) => {
+    if (!latest) return s;
+    if (s.date > latest.date) return s;
+    if (s.date === latest.date && (s.id ?? 0) > (latest.id ?? 0)) return s;
+    return latest;
+  }, null);
+}
+
 export function getSetsForExercise(exerciseId) {
   return new Promise((res, rej) => {
     const req = tx('sets').index('exerciseId').getAll(exerciseId);
-    req.onsuccess = e => res(e.target.result);
+    req.onsuccess = e => res(e.target.result.map(normalizeSet));
     req.onerror = e => rej(e.target.error);
   });
 }
 
 // Returns the max weight logged for a given exercise + rep count,
 // optionally filtered to a date window. Falls back to all-time if
-// no result found within the window.
+// no result found within the window. Only strength sets qualify —
+// timed/distance/output sets have no weight to compare.
 export async function getPR(exerciseId, reps, sinceDate = null) {
   const sets = await getSetsForExercise(exerciseId);
-  const matching = sets.filter(s => s.reps === reps);
+  const matching = sets.filter(s => s.type === 'strength' && s.reps === reps && Number.isFinite(s.weight));
 
   if (sinceDate) {
     const windowed = matching.filter(s => s.date >= sinceDate);

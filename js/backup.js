@@ -1,16 +1,18 @@
 import { openDB, getExercises, getSets, getEquipment } from './db.js';
 import { VERSION } from './version.js';
+import { BACKUP_VERSION, migrateBackup } from './schema.js';
+import { localDateStr } from './dates.js';
 
 // ── Export ─────────────────────────────────────────────────
 export async function exportBackup() {
   const [exercises, sets, equipment] = await Promise.all([
     getExercises(),
-    getSets(),
+    getSets(),        // already normalized to the current set schema
     getEquipment(),
   ]);
 
   const backup = {
-    version: 1,
+    version: BACKUP_VERSION,
     appVersion: VERSION,
     exportedAt: new Date().toISOString(),
     exercises,
@@ -20,7 +22,7 @@ export async function exportBackup() {
 
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const date = new Date().toISOString().split('T')[0];
+  const date = localDateStr();
   const a = document.createElement('a');
   a.href = url;
   a.download = `iron-log-backup-${date}.json`;
@@ -37,16 +39,20 @@ export function importBackup(onComplete) {
     const file = e.target.files[0];
     if (!file) return;
 
-    let data;
+    let parsed;
     try {
-      data = JSON.parse(await file.text());
+      parsed = JSON.parse(await file.text());
     } catch {
       alert('Could not read that file — make sure it\'s a valid Iron Log backup.');
       return;
     }
 
-    if (!data.version || !Array.isArray(data.exercises) || !Array.isArray(data.sets)) {
-      alert('This doesn\'t look like a valid Iron Log backup file.');
+    // Upgrades older backups; rejects files from a newer app version.
+    let data;
+    try {
+      data = migrateBackup(parsed);
+    } catch (err) {
+      alert(err.message);
       return;
     }
 

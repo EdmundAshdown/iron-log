@@ -526,6 +526,81 @@ select:focus, input:focus { border-color: var(--accent); }
   color: var(--text);
 }
 
+/* ── Metric input (Log modal) ────────────────────────── */
+.metric-block { margin-bottom: 18px; }
+
+.metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.metric-unit { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.stepper { display: flex; align-items: stretch; gap: 6px; }
+
+.step-btn {
+  min-width: 52px;
+  padding: 12px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-md);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.15s, transform 0.1s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.step-btn:active { transform: scale(0.94); border-color: var(--accent); color: var(--accent); }
+
+.step-value {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  padding: 6px 8px !important;
+  background: var(--surface) !important;
+  font-family: var(--font-display) !important;
+  font-size: 30px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.02em;
+}
+
+/* Hide native number spinners — the steppers replace them */
+.step-value::-webkit-outer-spin-button,
+.step-value::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.step-value { -moz-appearance: textfield; }
+
+.chips-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+.chip-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border-md);
+  border-radius: 6px;
+  padding: 7px 13px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.chip-btn:active,
+.chip-btn.active { border-color: var(--accent); color: var(--accent); }
+
 /* ── Divider ─────────────────────────────────────────── */
 .divider { height: 1px; background: var(--border); margin: 12px 0; }
 

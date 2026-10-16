@@ -22,6 +22,8 @@ iron-log/
   js/
     app.js          # Main app logic
     db.js           # IndexedDB data layer
+    schema.js       # Set schema, validation, backup migration
+    dates.js        # Local calendar-day helpers
     calc.js         # Plate calculator + session plan
     confetti.js     # Set completion celebration
     backup.js       # JSON export/import
@@ -52,3 +54,41 @@ python -m http.server 8080
 ## Versioning
 
 Bump `js/version.js` with each release. Shows in Settings tab.
+
+## Data model
+
+A logged set is a discriminated record — `type` decides which metric
+fields are meaningful (see `js/schema.js`):
+
+| `type`     | Metric fields          | Example          |
+|------------|------------------------|------------------|
+| `strength` | `weight` (lbs), `reps` | 5 × 225 lbs      |
+| `timed`    | `duration` (seconds)   | 1:30             |
+| `distance` | `distance` (metres)    | 5 km             |
+| `output`   | `output` (count)       | 30 calories      |
+
+Every set also stores `exerciseId`, `date` (`YYYY-MM-DD`) and `notes`.
+Records written before v2 have no `type` and are treated as `strength`;
+IndexedDB is migrated in place on upgrade (`DB_VERSION` in `js/db.js`).
+
+### Backup compatibility
+
+`js/backup.js` writes `version: 2` (`BACKUP_VERSION`). On import, older
+files are migrated up to the current version; files from a newer app
+version are rejected rather than silently misread.
+
+## Testing
+
+Schema and migration logic is covered by Node's built-in test runner
+(no dependencies):
+
+```bash
+npm test
+```
+
+## Releases
+
+The service worker is cache-first and precaches an explicit asset list in
+`sw.js`. **Bump the `CACHE` name on every release** and add any new module
+to `ASSETS` — otherwise installed clients keep serving the old files.
+Bump `js/version.js` at the same time.

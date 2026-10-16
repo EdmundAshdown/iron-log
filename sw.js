@@ -1,10 +1,12 @@
-const CACHE = 'iron-log-v1';
+const CACHE = 'iron-log-v2';
 const ASSETS = [
   './',
   './index.html',
   './css/app.css',
   './js/app.js',
   './js/db.js',
+  './js/schema.js',
+  './js/dates.js',
   './js/calc.js',
   './js/confetti.js',
   './js/backup.js',

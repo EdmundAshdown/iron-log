@@ -716,6 +716,16 @@ body.rest-active #content { padding-bottom: 104px; }
   padding: 20px 20px 40px;
   transform: translateY(100%);
   transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  /* A circuit with several exercises grows taller than the screen. The overlay
+     pins the sheet to the bottom (align-items: flex-end), so without a cap the
+     top would sit above the viewport and could never be reached. Cap the sheet
+     and scroll inside it instead, leaving a strip of overlay visible so
+     tap-to-dismiss still works. */
+  max-height: calc(100vh - 56px);
+  max-height: calc(100dvh - 56px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-overlay.open .modal-sheet { transform: translateY(0); }
